@@ -1,0 +1,20 @@
+#wrapper {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+#topBar {
+    display: flex;
+    height: 10vh;
+    margin: auto;
+    align-items: center;
+}
+
+#botBar {
+    display: flex;
+    height: 10vh;
+    margin: auto;
+    align-items: center;
+}
