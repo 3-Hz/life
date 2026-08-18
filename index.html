@@ -1,20 +1,99 @@
 <!DOCTYPE html>
 <html lang="en">
     <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>life — audio-reactive 3D automaton</title>
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2307070c'/><rect x='3' y='3' width='5' height='5' fill='%236ad3ff'/><rect x='8' y='8' width='5' height='5' fill='%23ff5599'/></svg>">
         <link rel="stylesheet" href="styles.css">
-        <script src="pre.js"></script>
+        <script type="importmap">
+        {
+            "imports": {
+                "three": "./vendor/three.module.min.js"
+            }
+        }
+        </script>
     </head>
     <body>
-        <div id="wrapper">
-            <div id="topBar">
-                LIFE...
-            </div>
-            <div id="app"></div>
-            <div id="botBar">
-                <button onclick="reSpark()">...FINDS A WAY?</button>
-            </div>
-        </div>
-        <script src="p5.js"></script>
-        <script src="sketch.js"></script>
+        <canvas id="view"></canvas>
+
+        <header id="hud">
+            <span class="brand">LIFE...</span>
+            <span>GEN <b id="hudGen">0</b></span>
+            <span>ALIVE <b id="hudPop">0</b></span>
+            <span>DRAWN <b id="hudDrawn">0</b></span>
+            <span>TICK/S <b id="hudRate">0</b></span>
+            <span>FPS <b id="hudFps">0</b></span>
+            <span>BEATS <b id="hudBeat">0</b></span>
+        </header>
+
+        <aside id="panel">
+            <section>
+                <h2>Automaton</h2>
+                <label>Rule
+                    <select id="rule">
+                        <option value="S9-9/B7-10">S9/B7-10 — dense ball</option>
+                        <option value="5-7/6-8">5-7/6-8 — dense, self-sustaining</option>
+                        <option value="S7-12/B9-12" selected>S7-12/B9-12 — wispy, slow decay</option>
+                        <option value="4555">4555 — Bays, dies without beats</option>
+                        <option value="5766">5766 — Bays, dies without beats</option>
+                        <option value="custom">custom…</option>
+                    </select>
+                </label>
+                <input id="ruleCustom" type="text" placeholder="e.g. S4-5/B5" hidden>
+                <label>Lattice
+                    <select id="size">
+                        <option value="32">32³</option>
+                        <option value="48" selected>48³</option>
+                        <option value="64">64³ — heavy</option>
+                    </select>
+                </label>
+                <label class="check"><input id="wrap" type="checkbox" checked> Wrap edges (toroidal)</label>
+                <label class="check"><input id="occlusion" type="checkbox" checked> Skip buried cells</label>
+                <label class="check"><input id="revive" type="checkbox" checked> Never let it die</label>
+                <div class="buttons">
+                    <button id="seed">SEED</button>
+                    <button id="pause">PAUSE</button>
+                    <button id="step">STEP</button>
+                    <button id="clear">CLEAR</button>
+                </div>
+                <p class="hint">space pauses · s steps · c clears · r re-seeds · drag to orbit</p>
+            </section>
+
+            <section>
+                <h2>Audio</h2>
+                <div class="buttons">
+                    <button data-source="system">System / other tab</button>
+                    <button data-source="tab">This tab</button>
+                    <button data-source="mic">Microphone</button>
+                    <button data-source="tone">Test tone</button>
+                </div>
+                <label class="file">Audio file
+                    <input id="fileInput" type="file" accept="audio/*">
+                </label>
+                <p id="audioStatus" class="status">no audio source</p>
+                <p class="hint">
+                    Playing a track below still needs the share picker: an embedded player is a
+                    cross-origin iframe, and no browser API turns its audio into samples. Pick
+                    <b>This tab</b> and share this tab with audio.
+                </p>
+                <label>Sensitivity <b id="sensitivityLabel">60</b>
+                    <input id="sensitivity" type="range" min="0" max="100" value="60">
+                </label>
+            </section>
+
+            <section>
+                <h2>SoundCloud</h2>
+                <div class="track">
+                    <input id="trackUrl" type="url" placeholder="https://soundcloud.com/artist/track">
+                    <button id="loadTrack">LOAD</button>
+                </div>
+                <iframe id="scPlayer" title="SoundCloud player" allow="autoplay"
+                        frameborder="0" scrolling="no"></iframe>
+                <p id="playerNote" class="hint"></p>
+            </section>
+        </aside>
+
+        <script type="module" src="./src/main.js"></script>
     </body>
 </html>
