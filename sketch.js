@@ -114,7 +114,7 @@ function countNeighbors(i,j) {
         for (let dy = -1; dy <= 1; dy++) {
             nx = i + dx;
             ny = j + dy;
-            if ((nx > 0) && (nx < columns) && (ny > 0) && (ny < rows)) {
+            if ((nx >= 0) && (nx < columns) && (ny >= 0) && (ny < rows)) {
                 neighbors += board[nx][ny];
             }
         }
