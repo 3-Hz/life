@@ -11,8 +11,8 @@ export function bindUI(app) {
         ruleCustom: $('ruleCustom'),
         size: $('size'),
         wrap: $('wrap'),
-        occlusion: $('occlusion'),
         revive: $('revive'),
+        autoQuality: $('autoQuality'),
         sensitivity: $('sensitivity'),
         sensitivityLabel: $('sensitivityLabel'),
         seed: $('seed'),
@@ -30,6 +30,11 @@ export function bindUI(app) {
         hudRate: $('hudRate'),
         hudFps: $('hudFps'),
         hudBeat: $('hudBeat'),
+        hudPerf: $('hudPerf'),
+        perfSim: $('perfSim'),
+        perfSync: $('perfSync'),
+        perfFrame: $('perfFrame'),
+        perfQuality: $('perfQuality'),
     };
 
     els.rule.addEventListener('change', () => {
@@ -49,9 +54,11 @@ export function bindUI(app) {
 
     els.size.addEventListener('change', () => app.setSize(Number(els.size.value)));
     els.wrap.addEventListener('change', () => app.setWrap(els.wrap.checked));
-    els.occlusion.addEventListener('change', () => {
-        app.renderer.occlusionCull = els.occlusion.checked;
-        app.markDirty();
+    els.autoQuality.addEventListener('change', () => {
+        app.autoQuality = els.autoQuality.checked;
+        // Someone who switches this off wants the quality they picked, so go
+        // back to full rather than leaving them wherever the controller landed.
+        if (!els.autoQuality.checked) app.setQualityLevel(0);
     });
 
     els.revive.addEventListener('change', () => {
@@ -100,6 +107,9 @@ export function bindUI(app) {
 
     return {
         els,
+        setSizeSelection(n) {
+            els.size.value = String(n);
+        },
         setAudioStatus(text, isError = false) {
             els.audioStatus.textContent = text;
             els.audioStatus.classList.toggle('error', isError);
@@ -114,6 +124,12 @@ export function bindUI(app) {
             els.hudRate.textContent = stats.tickRate.toFixed(1);
             els.hudFps.textContent = stats.fps.toFixed(0);
             els.hudBeat.textContent = stats.beats;
+            if (!stats.perf) return;
+            els.hudPerf.hidden = false;
+            els.perfSim.textContent = stats.perf.sim.toFixed(2);
+            els.perfSync.textContent = stats.perf.sync.toFixed(2);
+            els.perfFrame.textContent = stats.perf.frame.toFixed(1);
+            els.perfQuality.textContent = stats.quality;
         },
     };
 }

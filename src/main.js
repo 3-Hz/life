@@ -6,7 +6,6 @@ import { SoundCloudPlayer } from './player.js';
 import { mapToSim, mapToVisual, shiftBirth, TARGETS } from './mapping.js';
 import { bindUI, isMac } from './ui.js';
 
-const DEFAULT_SIZE = 48;
 const DEFAULT_RULE = 'S7-12/B9-12';
 const SEED_DENSITY = 0.18;
 // Without audio there is no loudness to read, and the audio-driven floor of
@@ -18,12 +17,30 @@ const SILENT_TICK_RATE = 8;
 // finding a way.
 const REVIVE_FRACTION = 0.002;
 
+// Phones get a smaller lattice and a lower pixel-ratio ceiling from the start,
+// rather than being walked down to one by the quality controller.
+const MOBILE = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+const DEFAULT_SIZE = MOBILE ? 32 : 48;
+
+// Quality rungs, cheapest visual cost first. The controller walks down this
+// list under load and back up when there is headroom.
+const QUALITY_LEVELS = [
+    { pixelRatio: 2.0, tickCeiling: 24, sizeCap: null },
+    { pixelRatio: 1.5, tickCeiling: 24, sizeCap: null },
+    { pixelRatio: 1.0, tickCeiling: 15, sizeCap: null },
+    { pixelRatio: 0.75, tickCeiling: 10, sizeCap: 48 },
+    { pixelRatio: 0.75, tickCeiling: 10, sizeCap: 32 },
+];
+const SLOW_FRAME_MS = 20;   // below ~50fps
+const FAST_FRAME_MS = 12;   // comfortably above 60fps
+const LEVEL_DWELL_MS = 1500; // hysteresis, so it cannot oscillate
+
 class App {
     constructor() {
         this.rule = parseRule(DEFAULT_RULE);
         this.lattice = new Lattice(DEFAULT_SIZE, { wrap: true });
         this.rng = mulberry32(0xC0FFEE);
-        this.renderer = new VoxelRenderer(document.getElementById('view'), DEFAULT_SIZE);
+        this.renderer = new VoxelRenderer(document.getElementById('view'), DEFAULT_SIZE, { mobile: MOBILE });
         this.audio = new AudioEngine();
         this.player = new SoundCloudPlayer(document.getElementById('scPlayer'));
 
@@ -31,11 +48,23 @@ class App {
         this.autoRevive = true;
         this.population = 0;
         this.paused = false;
-        this.tickRate = 8;
+        this.tickRate = SILENT_TICK_RATE;
         this.beats = 0;
+
+        this.autoQuality = true;
+        this.qualityLevel = 0;
+        this._levelChangedAt = 0;
+        // What the user asked for. The controller may cap below it, never above.
+        this.chosenSize = DEFAULT_SIZE;
+
+        // Rolling profile, surfaced in the HUD with ?perf.
+        this.perf = new URLSearchParams(location.search).has('perf');
+        this.timing = { sim: 0, sync: 0, frame: 0, draws: 0 };
+
         this._accumulator = 0;
         this._last = performance.now();
         this._fps = 60;
+        this._frameMs = 16;
         this._hudDue = 0;
         this._dirty = true;
 
@@ -58,12 +87,12 @@ class App {
 
     togglePause() {
         this.paused = !this.paused;
+        this.markDirty();
     }
 
     stepOnce() {
         this.paused = true;
-        this.lattice.step(this.rule);
-        this.population = this.lattice.population();
+        this.population = this.lattice.step(this.rule);
         this.markDirty();
     }
 
@@ -80,7 +109,9 @@ class App {
         }
     }
 
-    setSize(n) {
+    setSize(n, { userChoice = true } = {}) {
+        if (userChoice) this.chosenSize = n;
+        if (n === this.lattice.n) return;
         const wrap = this.lattice.wrap;
         this.lattice = new Lattice(n, { wrap });
         this.renderer.setLatticeSize(n);
@@ -123,8 +154,42 @@ class App {
         }
     }
 
+    //-------QUALITY-------
+    // Frame time decides, not frame rate: a 20ms frame is a dropped frame
+    // whether or not the average still looks acceptable.
+    updateQuality(now) {
+        if (!this.autoQuality) return;
+        if (now - this._levelChangedAt < LEVEL_DWELL_MS) return;
+
+        if (this._frameMs > SLOW_FRAME_MS && this.qualityLevel < QUALITY_LEVELS.length - 1) {
+            this.setQualityLevel(this.qualityLevel + 1, now);
+        } else if (this._frameMs < FAST_FRAME_MS && this.qualityLevel > 0) {
+            this.setQualityLevel(this.qualityLevel - 1, now);
+        }
+    }
+
+    setQualityLevel(level, now = performance.now()) {
+        const previous = this.qualityLevel;
+        this.qualityLevel = level;
+        this._levelChangedAt = now;
+        this.renderer.setPixelRatio(QUALITY_LEVELS[level].pixelRatio);
+
+        // Shrinking the lattice reallocates it, which means a reseed -- it
+        // throws away whatever the viewer was watching. So it is the last
+        // resort, and it does not reverse itself: recovering would reseed a
+        // second time, and a machine that just struggled will likely struggle
+        // again. The user can raise it back whenever they want.
+        const cap = QUALITY_LEVELS[level].sizeCap;
+        if (level > previous && cap !== null && this.lattice.n > cap) {
+            this.setSize(cap, { userChoice: false });
+            this.ui.setSizeSelection(cap);
+            this.ui.setAudioStatus(`frames were slipping — dropped to ${cap}³ to keep up`);
+        }
+    }
+
     //-------LOOP-------
     frame(now) {
+        const frameStart = now;
         const dt = Math.min((now - this._last) / 1000, 0.25);
         this._last = now;
         this._fps += (1 / Math.max(dt, 0.001) - this._fps) * 0.1;
@@ -132,7 +197,8 @@ class App {
         const features = this.audio.features(now);
         const sim = mapToSim(features, this.sensitivity, TARGETS);
         const visual = mapToVisual(features, this.sensitivity, TARGETS);
-        this.tickRate = this.audio.active ? sim.tickRate : SILENT_TICK_RATE;
+        const ceiling = QUALITY_LEVELS[this.qualityLevel].tickCeiling;
+        this.tickRate = Math.min(this.audio.active ? sim.tickRate : SILENT_TICK_RATE, ceiling);
 
         if (features.beat) this.beats++;
         if (sim.burst && !this.paused) {
@@ -141,17 +207,19 @@ class App {
                 Math.floor(this.rng() * n), Math.floor(this.rng() * n), Math.floor(this.rng() * n),
                 sim.burst.radius, sim.burst.density, this.rng,
             );
+            this.population = this.lattice.population();
             this.markDirty();
         }
 
         let ticks = 0;
+        const simStart = performance.now();
         if (!this.paused) {
             this._accumulator += dt;
             const interval = 1 / this.tickRate;
             // Capped so a backgrounded tab does not return and run a hundred
             // generations in one frame.
             while (this._accumulator >= interval && ticks < 4) {
-                this.lattice.step(shiftBirth(this.rule, sim.birthShift));
+                this.population = this.lattice.step(shiftBirth(this.rule, sim.birthShift));
                 this._accumulator -= interval;
                 ticks++;
                 this._dirty = true;
@@ -160,8 +228,7 @@ class App {
             // build a backlog that runs forever.
             if (this._accumulator > interval) this._accumulator = interval;
         }
-
-        if (ticks > 0 || this._dirty) this.population = this.lattice.population();
+        const simMs = performance.now() - simStart;
 
         // Nothing to watch is worse than the wrong thing to watch.
         if (this.autoRevive && !this.paused && this.population < this.lattice.size * REVIVE_FRACTION) {
@@ -174,12 +241,30 @@ class App {
             this.markDirty();
         }
 
+        let syncMs = 0;
         if (this._dirty) {
-            this.renderer.syncLattice(this.lattice, visual);
+            const syncStart = performance.now();
+            this.renderer.syncLattice(this.lattice);
+            syncMs = performance.now() - syncStart;
             this._dirty = false;
         }
+
+        // Draw only when something moved. With the sim paused, no audio and the
+        // camera at rest there is nothing new to put on screen.
         this.renderer.applyVisual(visual);
-        this.renderer.render();
+        const cameraMoved = this.renderer.updateControls();
+        const audioLive = this.audio.active;
+        if (ticks > 0 || syncMs > 0 || cameraMoved || audioLive) {
+            this.renderer.render();
+            this.timing.draws++;
+        }
+
+        const frameMs = performance.now() - frameStart;
+        this._frameMs += (frameMs - this._frameMs) * 0.1;
+        if (simMs) this.timing.sim += (simMs - this.timing.sim) * 0.2;
+        if (syncMs) this.timing.sync += (syncMs - this.timing.sync) * 0.2;
+        this.timing.frame = this._frameMs;
+        this.updateQuality(now);
 
         if (now > this._hudDue) {
             this._hudDue = now + 250;
@@ -190,6 +275,8 @@ class App {
                 tickRate: this.tickRate,
                 fps: this._fps,
                 beats: this.beats,
+                perf: this.perf ? this.timing : null,
+                quality: this.qualityLevel,
             });
         }
 

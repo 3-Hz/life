@@ -31,6 +31,43 @@ test('separable counts match the naive oracle, cell for cell', () => {
     }
 });
 
+// step() no longer calls computeCounts() -- it fuses the z-pass into the rule
+// application. Without this test the separable-vs-naive test above would still
+// pass while covering code nothing runs.
+test('the fused step counts neighbors exactly as the naive oracle does', () => {
+    for (const n of [4, 7, 12]) {
+        for (const wrap of [true, false]) {
+            const lattice = randomLattice(n, wrap, n * 13 + (wrap ? 2 : 0));
+            const rule = parseRule('S7-12/B9-12');
+            for (let generation = 0; generation < 5; generation++) {
+                // Oracle reads the board as it stands, before the step mutates it.
+                const expected = new Uint8Array(lattice.size);
+                for (let z = 0; z < n; z++) {
+                    for (let y = 0; y < n; y++) {
+                        for (let x = 0; x < n; x++) {
+                            expected[lattice.index(x, y, z)] = lattice.countNeighborsNaive(x, y, z);
+                        }
+                    }
+                }
+                lattice.step(rule);
+                assert.deepEqual(
+                    Array.from(lattice.counts), Array.from(expected),
+                    `fused counts diverged at n=${n}, wrap=${wrap}, gen=${generation}`,
+                );
+            }
+        }
+    }
+});
+
+test('step returns the population it just produced', () => {
+    const lattice = randomLattice(10, true, 3);
+    const rule = parseRule('S7-12/B9-12');
+    for (let i = 0; i < 8; i++) {
+        const returned = lattice.step(rule);
+        assert.equal(returned, lattice.population(), 'returned population must match a full recount');
+    }
+});
+
 test('counts stay correct as the lattice evolves', () => {
     const lattice = randomLattice(8, true, 7);
     const rule = parseRule('4555');
@@ -101,6 +138,31 @@ test('age rises while a cell lives and resets when it dies', () => {
 
     lattice.step({ sMin: 27, sMax: 27, bMin: 27, bMax: 27 });
     assert.equal(lattice.age[lattice.index(2, 2, 2)], 0);
+});
+
+test('counts describe the current cells after seeding, clearing and injecting', () => {
+    // The renderer reads counts[] every sync, including on frames where no step
+    // ran, so a stale array shows as wrong shading or a wrongly hidden cell.
+    const lattice = new Lattice(9, { wrap: true });
+    const check = (label) => {
+        for (let z = 0; z < 9; z++) {
+            for (let y = 0; y < 9; y++) {
+                for (let x = 0; x < 9; x++) {
+                    assert.equal(
+                        lattice.counts[lattice.index(x, y, z)],
+                        lattice.countNeighborsNaive(x, y, z),
+                        `stale count at ${x},${y},${z} after ${label}`,
+                    );
+                }
+            }
+        }
+    };
+    lattice.seedRandom(0.3, mulberry32(11));
+    check('seedRandom');
+    lattice.injectSphere(4, 4, 4, 3, 0.8, mulberry32(12));
+    check('injectSphere');
+    lattice.clear();
+    check('clear');
 });
 
 //-------Determinism-------

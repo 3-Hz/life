@@ -1,23 +1,103 @@
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 
-// Live cells are drawn as one InstancedMesh of cubes. Matrices and colors are
-// rebuilt on simulation ticks only; the per-frame audio reaction rides on
-// material and camera uniforms, which cost nothing per cell.
+// Live cells are drawn as one instanced draw call. Per tick the CPU writes five
+// bytes per live cell -- lattice coordinate, age, neighbor count -- and nothing
+// else. Placement, color, scale, ambient occlusion and fog are all resolved on
+// the GPU, so the per-frame audio reaction costs a handful of uniform writes
+// rather than a rebuild of every instance.
+//
+// Cell coordinates travel as unsigned bytes, which caps the lattice at 255^3 and
+// keeps the per-tick upload four times smaller than float offsets would.
 
-const MAX_INSTANCES = 150000;
+const VERTEX_SHADER = /* glsl */ `
+    attribute vec4 aCell;   // xyz = lattice coordinate, w = age
+    attribute float aCount; // live neighbors, 0-26
+
+    uniform float uScale;
+    uniform float uHalf;
+
+    varying float vAge;
+    varying float vCount;
+    varying vec3 vNormal;
+    varying float vDepth;
+
+    void main() {
+        vAge = aCell.w / 255.0;
+        vCount = aCount;
+        vNormal = normalMatrix * normal;
+
+        vec3 world = position * uScale + (aCell.xyz - uHalf);
+        vec4 viewPos = modelViewMatrix * vec4(world, 1.0);
+        vDepth = -viewPos.z;
+        gl_Position = projectionMatrix * viewPos;
+    }
+`;
+
+const FRAGMENT_SHADER = /* glsl */ `
+    precision mediump float;
+
+    uniform vec3 uYoung;
+    uniform vec3 uOld;
+    uniform vec3 uTint;
+    uniform vec3 uFogColor;
+    uniform vec3 uKeyDir;
+    uniform float uEmissive;
+    uniform float uFogNear;
+    uniform float uFogFar;
+    uniform float uAo;
+
+    varying float vAge;
+    varying float vCount;
+    varying vec3 vNormal;
+    varying float vDepth;
+
+    void main() {
+        vec3 normal = normalize(vNormal);
+
+        // Wrapped lambert: a single dot product, no specular BRDF. The fragment
+        // cost is what hurts on tiled mobile GPUs, so this stays cheap.
+        float key = dot(normal, uKeyDir) * 0.5 + 0.5;
+        float rim = pow(1.0 - abs(normal.z), 3.0) * 0.4;
+
+        // Age ramp, matching the old CPU-side HSL walk: saturates around 22
+        // generations, so young cells read hot and settled ones cool.
+        float age = clamp(vAge * 6.0, 0.0, 1.0);
+        vec3 base = mix(uYoung, uOld, age) * uTint;
+
+        // Ambient occlusion for free: the simulation already counted these
+        // neighbors, and a crowded cell is a cell down in a crevice.
+        float occlusion = 1.0 - (vCount / 26.0) * uAo;
+
+        vec3 color = base * (0.22 + 0.78 * key) * occlusion;
+        color += base * rim;
+        color += base * uEmissive * (1.0 - age); // young cells glow
+
+        float fog = clamp((vDepth - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
+        gl_FragColor = vec4(mix(color, uFogColor, fog), 1.0);
+    }
+`;
+
+const BACKGROUND = 0x07070c;
 
 export class VoxelRenderer {
-    constructor(canvas, n) {
+    constructor(canvas, n, { mobile = false } = {}) {
         this.canvas = canvas;
         this.n = n;
+        this.mobile = mobile;
 
-        this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer = new THREE.WebGLRenderer({
+            canvas,
+            // MSAA is disproportionately expensive on tiled mobile GPUs.
+            antialias: !mobile,
+            powerPreference: 'high-performance',
+        });
+        this.maxPixelRatio = mobile ? 1.5 : 2;
+        this.pixelRatio = Math.min(window.devicePixelRatio, this.maxPixelRatio);
+        this.renderer.setPixelRatio(this.pixelRatio);
 
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x07070c);
-        this.scene.fog = new THREE.Fog(0x07070c, n * 1.6, n * 4.5);
+        this.scene.background = new THREE.Color(BACKGROUND);
 
         this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
         this.camera.position.set(n * 1.1, n * 0.85, n * 1.35);
@@ -27,73 +107,66 @@ export class VoxelRenderer {
         this.controls.dampingFactor = 0.07;
         this.controls.target.set(0, 0, 0);
 
-        this.scene.add(new THREE.HemisphereLight(0x88aaff, 0x191024, 1.1));
-        const key = new THREE.DirectionalLight(0xffffff, 1.4);
-        key.position.set(1, 1.4, 0.8);
-        this.scene.add(key);
-        const rim = new THREE.DirectionalLight(0xff5599, 0.6);
-        rim.position.set(-1, -0.6, -0.9);
-        this.scene.add(rim);
-
-        this.material = new THREE.MeshStandardMaterial({
-            roughness: 0.42,
-            metalness: 0.12,
-            emissive: new THREE.Color(0x224466),
-            emissiveIntensity: 0.2,
+        // Palette carried over from the material this shader replaces, so the
+        // app still reads as itself.
+        this.material = new THREE.ShaderMaterial({
+            vertexShader: VERTEX_SHADER,
+            fragmentShader: FRAGMENT_SHADER,
+            uniforms: {
+                uScale: { value: 0.9 },
+                uHalf: { value: (n - 1) / 2 },
+                uYoung: { value: new THREE.Color().setHSL(0.58, 0.75, 0.35) },
+                uOld: { value: new THREE.Color().setHSL(0.06, 0.75, 0.63) },
+                uTint: { value: new THREE.Color(1, 1, 1) },
+                uFogColor: { value: new THREE.Color(BACKGROUND) },
+                uKeyDir: { value: new THREE.Vector3(1, 1.4, 0.8).normalize() },
+                uEmissive: { value: 0.2 },
+                uFogNear: { value: n * 1.6 },
+                uFogFar: { value: n * 4.5 },
+                uAo: { value: 0.55 },
+            },
         });
 
-        this.mesh = new THREE.InstancedMesh(
-            new THREE.BoxGeometry(1, 1, 1),
-            this.material,
-            Math.min(n * n * n, MAX_INSTANCES),
-        );
-        this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-        this.mesh.frustumCulled = false; // instances move every tick
-        this.mesh.count = 0;
-        this.scene.add(this.mesh);
-        // Allocates the instanceColor buffer so per-cell colors can be written.
-        this.mesh.setColorAt(0, new THREE.Color(0xffffff));
+        this.buildMesh(n);
 
-        this.bounds = new THREE.LineSegments(
-            new THREE.EdgesGeometry(new THREE.BoxGeometry(n, n, n)),
-            new THREE.LineBasicMaterial({ color: 0x2a3350 }),
-        );
-        this.scene.add(this.bounds);
+        this.bounds = null;
+        this.rebuildBounds(n);
 
-        this._dummy = new THREE.Object3D();
-        this._color = new THREE.Color();
-        this._tint = new THREE.Color();
         this.drawn = 0;
-        this.occlusionCull = true;
-
         this.resize();
     }
 
-    // Rebuilding for a different lattice size means new geometry extents and a
-    // new instance capacity, so the old mesh is thrown away.
-    setLatticeSize(n) {
-        if (n === this.n) return;
-        this.scene.remove(this.mesh, this.bounds);
-        this.mesh.geometry.dispose();
-        this.mesh.dispose();
-        this.bounds.geometry.dispose();
-        this.bounds.material.dispose();
+    //-------GEOMETRY-------
+    buildMesh(n) {
+        const capacity = n * n * n;
+        this.cellData = new Uint8Array(capacity * 4); // x, y, z, age
+        this.countData = new Uint8Array(capacity);    // live neighbors
 
-        this.n = n;
-        this.scene.fog = new THREE.Fog(0x07070c, n * 1.6, n * 4.5);
-        this.camera.position.setLength(n * 1.9);
+        const box = new THREE.BoxGeometry(1, 1, 1);
+        const geometry = new THREE.InstancedBufferGeometry();
+        geometry.index = box.index;
+        geometry.attributes.position = box.attributes.position;
+        geometry.attributes.normal = box.attributes.normal;
 
-        this.mesh = new THREE.InstancedMesh(
-            new THREE.BoxGeometry(1, 1, 1),
-            this.material,
-            Math.min(n * n * n, MAX_INSTANCES),
-        );
-        this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-        this.mesh.frustumCulled = false;
-        this.mesh.count = 0;
+        this.cellAttribute = new THREE.InstancedBufferAttribute(this.cellData, 4);
+        this.cellAttribute.setUsage(THREE.DynamicDrawUsage);
+        this.countAttribute = new THREE.InstancedBufferAttribute(this.countData, 1);
+        this.countAttribute.setUsage(THREE.DynamicDrawUsage);
+        geometry.setAttribute('aCell', this.cellAttribute);
+        geometry.setAttribute('aCount', this.countAttribute);
+        geometry.instanceCount = 0;
+
+        this.mesh = new THREE.Mesh(geometry, this.material);
+        this.mesh.frustumCulled = false; // instances move every tick
         this.scene.add(this.mesh);
-        this.mesh.setColorAt(0, new THREE.Color(0xffffff));
+    }
 
+    rebuildBounds(n) {
+        if (this.bounds) {
+            this.scene.remove(this.bounds);
+            this.bounds.geometry.dispose();
+            this.bounds.material.dispose();
+        }
         this.bounds = new THREE.LineSegments(
             new THREE.EdgesGeometry(new THREE.BoxGeometry(n, n, n)),
             new THREE.LineBasicMaterial({ color: 0x2a3350 }),
@@ -101,57 +174,81 @@ export class VoxelRenderer {
         this.scene.add(this.bounds);
     }
 
-    // Called on simulation ticks. Walks live cells, skipping any that are fully
-    // buried, and writes one instance each.
-    syncLattice(lattice, visual) {
+    setLatticeSize(n) {
+        if (n === this.n) return;
+        this.scene.remove(this.mesh);
+        this.mesh.geometry.dispose();
+
+        this.n = n;
+        this.material.uniforms.uHalf.value = (n - 1) / 2;
+        this.material.uniforms.uFogNear.value = n * 1.6;
+        this.material.uniforms.uFogFar.value = n * 4.5;
+        this.camera.position.setLength(n * 1.9);
+
+        this.buildMesh(n);
+        this.rebuildBounds(n);
+    }
+
+    setPixelRatio(ratio) {
+        const clamped = Math.min(ratio, this.maxPixelRatio);
+        if (clamped === this.pixelRatio) return;
+        this.pixelRatio = clamped;
+        this.renderer.setPixelRatio(clamped);
+        this.resize();
+    }
+
+    //-------PER-TICK-------
+    // The whole per-cell cost of a tick: five bytes each, no matrices, no color
+    // conversion. Cells with all 26 neighbors alive are skipped -- they cannot
+    // be seen, and the test is free because the simulation already counted them.
+    syncLattice(lattice) {
         const n = lattice.n;
         const cells = lattice.cells;
         const age = lattice.age;
-        const wrap = lattice.wrap;
-        const half = (n - 1) / 2;
-        const scale = visual.voxelScale;
-        const capacity = this.mesh.instanceMatrix.count;
-        const dummy = this._dummy;
-        const color = this._color;
+        const counts = lattice.counts;
+        const cellData = this.cellData;
+        const countData = this.countData;
 
         let k = 0;
-        scan:
         for (let z = 0; z < n; z++) {
             for (let y = 0; y < n; y++) {
                 const row = n * (y + n * z);
                 for (let x = 0; x < n; x++) {
                     const i = row + x;
                     if (!cells[i]) continue;
-                    if (this.occlusionCull && isBuried(cells, n, wrap, x, y, z)) continue;
-                    if (k >= capacity) break scan; // lattice bigger than the instance cap
+                    const count = counts[i];
+                    if (count === 26) continue;
 
-                    dummy.position.set(x - half, y - half, z - half);
-                    dummy.scale.setScalar(scale);
-                    dummy.updateMatrix();
-                    this.mesh.setMatrixAt(k, dummy.matrix);
-
-                    // Young cells read hot, old cells cool and settle.
-                    const a = age[i] / 255;
-                    color.setHSL(0.58 - Math.min(a * 6, 0.52), 0.75, 0.35 + Math.min(a * 3, 0.28));
-                    this.mesh.setColorAt(k, color);
+                    const o = k * 4;
+                    cellData[o] = x;
+                    cellData[o + 1] = y;
+                    cellData[o + 2] = z;
+                    cellData[o + 3] = age[i];
+                    countData[k] = count;
                     k++;
                 }
             }
         }
 
-        this.mesh.count = k;
         this.drawn = k;
-        this.mesh.instanceMatrix.needsUpdate = true;
-        if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+        this.mesh.geometry.instanceCount = k;
+        this.cellAttribute.needsUpdate = true;
+        this.countAttribute.needsUpdate = true;
     }
 
-    // Per-frame, per-scene reaction: no instance data is touched here.
+    //-------PER-FRAME-------
+    // Uniforms only. Voxel scale used to be baked into every instance matrix,
+    // which meant the audio reaction forced a full rebuild; now it is one float.
     applyVisual(visual) {
-        this._tint.setHSL((0.55 + visual.hueShift) % 1, 0.35, 0.62);
-        this.material.color.copy(this._tint);
-        this.material.emissiveIntensity = visual.emissive;
-        this.camera.zoom = 1 + visual.dolly;
-        this.camera.updateProjectionMatrix();
+        const uniforms = this.material.uniforms;
+        uniforms.uScale.value = visual.voxelScale;
+        uniforms.uEmissive.value = visual.emissive;
+        uniforms.uTint.value.setHSL((0.55 + visual.hueShift) % 1, 0.25, 0.72);
+        const zoom = 1 + visual.dolly;
+        if (this.camera.zoom !== zoom) {
+            this.camera.zoom = zoom;
+            this.camera.updateProjectionMatrix();
+        }
     }
 
     resize() {
@@ -162,32 +259,20 @@ export class VoxelRenderer {
         this.camera.updateProjectionMatrix();
     }
 
-    render() {
+    // Reports whether the camera is still settling, so the loop can skip draws
+    // once everything has come to rest.
+    updateControls() {
+        const before = this._cameraKey();
         this.controls.update();
+        return before !== this._cameraKey();
+    }
+
+    _cameraKey() {
+        const p = this.camera.position;
+        return `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)},${this.camera.zoom.toFixed(4)}`;
+    }
+
+    render() {
         this.renderer.render(this.scene, this.camera);
     }
-}
-
-// A cell with all six faces covered cannot be seen, so it is not worth an
-// instance. On dense rules this removes most of the lattice.
-function isBuried(cells, n, wrap, x, y, z) {
-    return (
-        neighborAlive(cells, n, wrap, x - 1, y, z) &&
-        neighborAlive(cells, n, wrap, x + 1, y, z) &&
-        neighborAlive(cells, n, wrap, x, y - 1, z) &&
-        neighborAlive(cells, n, wrap, x, y + 1, z) &&
-        neighborAlive(cells, n, wrap, x, y, z - 1) &&
-        neighborAlive(cells, n, wrap, x, y, z + 1)
-    );
-}
-
-function neighborAlive(cells, n, wrap, x, y, z) {
-    if (wrap) {
-        x = ((x % n) + n) % n;
-        y = ((y % n) + n) % n;
-        z = ((z % n) + n) % n;
-    } else if (x < 0 || y < 0 || z < 0 || x >= n || y >= n || z >= n) {
-        return false; // an exposed face at the bounds is still visible
-    }
-    return cells[x + n * (y + n * z)] === 1;
 }

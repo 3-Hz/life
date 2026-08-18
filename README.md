@@ -44,10 +44,9 @@ capture needs a permission prompt on top of that.
 | — | drag | Orbits the camera; scroll zooms |
 
 **Wrap edges** makes the lattice toroidal (the default) so cells at the faces
-have full neighborhoods. **Skip buried cells** stops drawing cells whose six
-faces are all covered — invisible anyway, and on dense rules it removes most of
-the lattice. **Never let it die** reseeds a burst whenever the population
-collapses, so the toy is never empty when no audio is driving it.
+have full neighborhoods. **Never let it die** reseeds a burst whenever the
+population collapses, so the toy is never empty when no audio is driving it.
+**Adapt quality to frame rate** is described under Performance below.
 
 ## Rules
 
@@ -70,6 +69,41 @@ taste — a scan over the rule space looking for lattices that stay populated
 Most rules either die, decay, or saturate from soup; a rule that stays sparse and
 lively on its own is rare. That is what the beat injection is for.
 
+## Performance
+
+Add `?perf` to the URL for a live breakdown in the HUD: simulation ms, instance
+sync ms, frame ms, and the current quality level.
+
+Two things dominate a tick, and the renderer used to cost twice the simulation.
+Measured per tick, before and after this pass:
+
+| Lattice | before | after | |
+| --- | --- | --- | --- |
+| 32³ | 2.07ms | 0.77ms | 2.7× |
+| 48³ | 7.16ms | 2.76ms | 2.6× |
+| 64³ | 15.4ms | 6.57ms | 2.3× |
+
+At 64³ a single tick used to nearly consume a whole 16.6ms frame on its own.
+
+The renderer no longer rebuilds instance matrices. Per tick it writes five bytes
+per live cell — lattice coordinate, age, neighbor count — into instanced
+attributes, and the GPU resolves placement, color, scale, ambient occlusion and
+fog. Voxel scale is a uniform now, so the audio reaction costs nothing per cell.
+Ambient occlusion comes free from the neighbor counts the simulation already
+computes.
+
+Occlusion culling was removed. It cost ~1.2ms a tick and removed only ~12% of
+instances — it never paid for itself. What replaced it, skipping cells with all
+26 neighbors alive, is free but rarely fires at ordinary densities.
+
+**Adaptive quality** watches frame time (not frame rate — a 20ms frame is a
+dropped frame whatever the average says) and steps down under load: pixel ratio
+first, then the tick-rate ceiling, then lattice size. Pixel ratio and tick rate
+recover when there is headroom. Lattice size does not: shrinking reallocates and
+reseeds, so reversing it would throw the board away a second time. Raise it back
+by hand when you want it. Phones start at 32³ with antialiasing off and a lower
+pixel-ratio ceiling.
+
 ## Layout
 
 ```
@@ -90,8 +124,14 @@ node --test
 ```
 
 Neighbor counting is separable — three one-dimensional passes give every cell its
-3×3×3 box sum in about six adds instead of 26 loads. The naive version stays in
-the module purely as the oracle the tests check the fast path against.
+3×3×3 box sum in about six adds instead of 26 loads. The third pass is fused with
+the rule application, since writing counts only to read them straight back cost a
+full N³ round trip; it still fills `counts[]`, which the renderer shades from.
+
+`computeCounts()` and `countNeighborsNaive()` remain in the module purely as
+oracles. The tests check the real, fused path against them cell-for-cell —
+otherwise the separable-vs-naive test would keep passing while covering code
+nothing runs.
 
 ## Tuning
 

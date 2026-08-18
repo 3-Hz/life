@@ -25,6 +25,7 @@
             <span>TICK/S <b id="hudRate">0</b></span>
             <span>FPS <b id="hudFps">0</b></span>
             <span>BEATS <b id="hudBeat">0</b></span>
+            <span id="hudPerf" hidden>SIM <b id="perfSim">0</b>ms · SYNC <b id="perfSync">0</b>ms · FRAME <b id="perfFrame">0</b>ms · Q<b id="perfQuality">0</b></span>
         </header>
 
         <aside id="panel">
@@ -49,8 +50,8 @@
                     </select>
                 </label>
                 <label class="check"><input id="wrap" type="checkbox" checked> Wrap edges (toroidal)</label>
-                <label class="check"><input id="occlusion" type="checkbox" checked> Skip buried cells</label>
                 <label class="check"><input id="revive" type="checkbox" checked> Never let it die</label>
+                <label class="check"><input id="autoQuality" type="checkbox" checked> Adapt quality to frame rate</label>
                 <div class="buttons">
                     <button id="seed">SEED</button>
                     <button id="pause">PAUSE</button>

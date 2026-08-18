@@ -88,6 +88,7 @@ export class Lattice {
         this.cells.fill(0);
         this.next.fill(0);
         this.age.fill(0);
+        this.counts.fill(0);
         this.generation = 0;
     }
 
@@ -113,6 +114,9 @@ export class Lattice {
                 }
             }
         }
+        // The renderer shades from counts[], so it must describe these cells,
+        // not the generation this one replaced.
+        this.computeCounts();
     }
 
     // What a beat calls: scatter live cells through a sphere. Returns how many
@@ -144,6 +148,7 @@ export class Lattice {
                 }
             }
         }
+        if (born) this.computeCounts();
         return born;
     }
 
@@ -233,26 +238,86 @@ export class Lattice {
     }
 
     //-------STEP-------
+    // The z-pass and the rule application are fused: computeCounts() would
+    // write counts[] only for this loop to read it straight back, so the split
+    // cost a full N^3 write plus read for nothing. counts[] is still filled,
+    // because the renderer shades ambient occlusion from it.
+    //
+    // computeCounts() and countNeighborsNaive() remain the oracles this is
+    // tested against -- see test/automata.test.mjs.
     step(rule) {
         const { sMin, sMax, bMin, bMax } = rule;
-        const counts = this.computeCounts();
+        const n = this.n;
+        const wrap = this.wrap;
         const cells = this.cells;
         const next = this.next;
         const age = this.age;
+        const counts = this.counts;
+        const bufA = this._bufA;
+        const bufB = this._bufB;
+        const planeSize = n * n;
 
-        for (let i = 0; i < this.size; i++) {
-            const alive = cells[i];
-            const c = counts[i];
-            const survives = alive ? (c >= sMin && c <= sMax) : (c >= bMin && c <= bMax);
-            next[i] = survives ? 1 : 0;
-            if (!survives) age[i] = 0;
-            else if (alive) age[i] = age[i] < 255 ? age[i] + 1 : 255;
-            else age[i] = 1;
+        // Pass 1: sum along x.
+        for (let z = 0; z < n; z++) {
+            for (let y = 0; y < n; y++) {
+                const row = n * (y + n * z);
+                for (let x = 0; x < n; x++) {
+                    let sum = cells[row + x];
+                    if (x > 0) sum += cells[row + x - 1];
+                    else if (wrap) sum += cells[row + n - 1];
+                    if (x < n - 1) sum += cells[row + x + 1];
+                    else if (wrap) sum += cells[row];
+                    bufA[row + x] = sum;
+                }
+            }
+        }
+
+        // Pass 2: sum along y.
+        for (let z = 0; z < n; z++) {
+            const plane = planeSize * z;
+            for (let y = 0; y < n; y++) {
+                const row = plane + n * y;
+                const up = y > 0 ? row - n : (wrap ? plane + n * (n - 1) : -1);
+                const down = y < n - 1 ? row + n : (wrap ? plane : -1);
+                for (let x = 0; x < n; x++) {
+                    let sum = bufA[row + x];
+                    if (up >= 0) sum += bufA[up + x];
+                    if (down >= 0) sum += bufA[down + x];
+                    bufB[row + x] = sum;
+                }
+            }
+        }
+
+        // Pass 3: sum along z, drop the cell out of its own box, apply the rule,
+        // and tally the population -- all in one read of the data.
+        let alive = 0;
+        for (let z = 0; z < n; z++) {
+            const plane = planeSize * z;
+            const back = z > 0 ? plane - planeSize : (wrap ? planeSize * (n - 1) : -1);
+            const front = z < n - 1 ? plane + planeSize : (wrap ? 0 : -1);
+            for (let i = 0; i < planeSize; i++) {
+                const idx = plane + i;
+                let sum = bufB[idx];
+                if (back >= 0) sum += bufB[back + i];
+                if (front >= 0) sum += bufB[front + i];
+
+                const was = cells[idx];
+                const c = sum - was;
+                counts[idx] = c;
+
+                const on = was ? (c >= sMin && c <= sMax) : (c >= bMin && c <= bMax);
+                next[idx] = on ? 1 : 0;
+                if (!on) age[idx] = 0;
+                else if (was) age[idx] = age[idx] < 255 ? age[idx] + 1 : 255;
+                else age[idx] = 1;
+                alive += on ? 1 : 0;
+            }
         }
 
         this.cells = next;
         this.next = cells;
         this.generation++;
-        return this.cells;
+        // Returned so callers do not need a separate O(N^3) scan for it.
+        return alive;
     }
 }
