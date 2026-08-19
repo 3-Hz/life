@@ -305,6 +305,9 @@ const app = new App();
 window.addEventListener('resize', () => app.renderer.resize());
 app.initPlayer();
 app.ui.setAudioStatus('no audio source — pick one above');
+// Phones start at 32³, and nothing told the dropdown, so it read 48³ while the
+// app ran 32³. The select follows the lattice, never the markup's default.
+app.ui.setSizeSelection(app.lattice.n);
 requestAnimationFrame((t) => app.frame(t));
 
 // Exposed for the headless smoke check, which drives the app without a picker.

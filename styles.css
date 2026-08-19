@@ -1,11 +1,20 @@
 :root {
     --bg: #07070c;
-    --panel: rgba(14, 16, 26, 0.86);
+    --panel: rgba(14, 16, 26, 0.92);
     --line: #2a3350;
     --text: #d8e0f5;
     --dim: #8792b3;
     --accent: #6ad3ff;
     --error: #ff8080;
+
+    /* Overwritten from the measured dock at runtime -- guessing it left the
+       dock sitting on top of the panel's last row. This is only the fallback
+       used before the first measurement. */
+    --dock: 3.5rem;        /* portrait: dock height */
+    --dock-w: 6rem;        /* landscape: dock width */
+    --panel-w: 23em;       /* landscape rail width */
+    --panel-h: 68dvh;      /* portrait sheet height */
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 * { box-sizing: border-box; }
@@ -25,42 +34,71 @@ html, body {
     width: 100%;
     height: 100%;
     display: block;
+    /* The canvas owns its gestures: drag rotates, pinch zooms, tap re-seeds.
+       Without this the browser claims them for scrolling and pull-to-refresh. */
+    touch-action: none;
 }
 
+/*-------HUD-------*/
+/* Off by default and toggled from the dock, because a tap on the canvas
+   re-seeds and cannot also be a reveal. */
 #hud {
     position: fixed;
     top: 0;
     left: 0;
+    right: 0;
     display: flex;
-    gap: 1.25em;
-    padding: 0.75em 1em;
+    flex-wrap: wrap;
+    gap: 0.4em 1.25em;
+    padding: 0.6em 0.9em;
     letter-spacing: 0.04em;
     color: var(--dim);
     text-shadow: 0 1px 3px #000;
+    background: linear-gradient(#07070ccc, #07070c00);
     pointer-events: none;
 }
 
-#hud b {
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
+#hud[hidden] { display: none; }
+#hud b { color: var(--text); font-variant-numeric: tabular-nums; }
+#hud .brand { color: var(--accent); letter-spacing: 0.2em; }
+
+/*-------DOCK-------*/
+#dock {
+    position: fixed;
+    z-index: 3;
+    display: flex;
+    gap: 0.4em;
+    padding: 0.4em 0.6em;
+    background: var(--panel);
+    border: 1px solid var(--line);
 }
 
-#hud .brand {
+#dock button {
+    min-width: 2.6em;
+    white-space: nowrap;
+}
+
+#panelTab {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
     color: var(--accent);
-    letter-spacing: 0.2em;
+    border-color: var(--accent);
 }
 
+#panelTab .chev { transition: transform 0.25s var(--ease); }
+#hudToggle[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+
+/*-------PANEL-------*/
 #panel {
     position: fixed;
-    top: 3em;
-    right: 0;
-    width: min(23em, 92vw);
-    max-height: calc(100vh - 4em);
+    z-index: 2;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 1em;
     background: var(--panel);
-    border-left: 1px solid var(--line);
-    backdrop-filter: blur(8px);
+    border: 1px solid var(--line);
+    transition: transform 0.28s var(--ease);
 }
 
 #panel section + section {
@@ -69,6 +107,69 @@ html, body {
     border-top: 1px solid var(--line);
 }
 
+/*-------LANDSCAPE: a rail on the right, collapsing sideways-------*/
+@media (orientation: landscape) {
+    #dock {
+        top: 0;
+        right: 0;
+        flex-direction: column;
+        border-width: 0 0 1px 1px;
+        padding-top: max(0.4em, env(safe-area-inset-top));
+        padding-right: max(0.6em, env(safe-area-inset-right));
+    }
+
+    /* The panel sits beside the dock, never under it. Clearing the dock with
+       padding only protects the top of the scroll content -- everything scrolled
+       past it slid underneath. */
+    #panel {
+        top: 0;
+        right: var(--dock-w);
+        width: min(var(--panel-w), calc(90vw - var(--dock-w)));
+        height: 100dvh;
+        border-width: 0 0 0 1px;
+    }
+
+    body.panel-closed #panel { transform: translateX(calc(100% + var(--dock-w))); }
+    #panelTab .chev { transform: rotate(-90deg); }
+    body.panel-closed #panelTab .chev { transform: rotate(90deg); }
+    #panelTab .tabLabel { display: none; }
+}
+
+/*-------PORTRAIT: a sheet at the bottom, collapsing downward-------*/
+@media (orientation: portrait) {
+    #dock {
+        bottom: 0;
+        left: 0;
+        right: 0;
+        justify-content: center;
+        border-width: 1px 0 0;
+        padding-bottom: max(0.4em, env(safe-area-inset-bottom));
+    }
+
+    #panel {
+        left: 0;
+        right: 0;
+        bottom: var(--dock);
+        max-height: var(--panel-h);
+        border-width: 1px 0 0;
+    }
+
+    body.panel-closed #panel {
+        transform: translateY(calc(100% + var(--dock)));
+    }
+
+    body.panel-closed #panelTab .chev { transform: rotate(0deg); }
+    #panelTab .chev { transform: rotate(180deg); }
+
+    /* Seven stats do not fit 360px; the rest live on desktop and under ?perf. */
+    #hud > span:not(.keep):not(#hudPerf) { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #panel, #panelTab .chev { transition: none; }
+}
+
+/*-------CONTROLS-------*/
 h2 {
     margin: 0 0 0.8em;
     font-size: 11px;
@@ -86,10 +187,7 @@ label {
     color: var(--dim);
 }
 
-label.check {
-    justify-content: flex-start;
-}
-
+label.check { justify-content: flex-start; }
 label.file input { max-width: 12em; }
 
 select, input[type="text"], input[type="url"] {
@@ -126,6 +224,7 @@ button {
 
 button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .track { display: flex; gap: 0.4em; margin-bottom: 0.6em; }
 
@@ -155,6 +254,31 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .hint b { color: var(--text); }
 
-@media (max-width: 720px) {
-    #panel { top: auto; bottom: 0; width: 100%; max-height: 55vh; border-left: none; border-top: 1px solid var(--line); }
+/*-------TOUCH-------*/
+/* Every control clears the 44px guidance, and form fields hit 16px so iOS
+   Safari does not zoom the page when one takes focus. */
+@media (pointer: coarse) {
+    button, select, input[type="file"], input[type="text"], input[type="url"] {
+        min-height: 44px;
+        font-size: 16px;
+    }
+
+    #dock button { min-height: 44px; padding-inline: 0.9em; }
+
+    label.check {
+        min-height: 44px;
+        margin-bottom: 0.2em;
+        gap: 0.75em;
+    }
+
+    input[type="checkbox"] {
+        width: 24px;
+        height: 24px;
+        accent-color: var(--accent);
+    }
+
+    input[type="range"] { height: 44px; }
+
+    /* A full-screen blur every frame, on a GPU already drawing the lattice. */
+    #panel, #dock { backdrop-filter: none; }
 }

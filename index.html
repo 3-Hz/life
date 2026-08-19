@@ -17,13 +17,22 @@
     <body>
         <canvas id="view"></canvas>
 
-        <header id="hud">
+        <div id="dock">
+            <button id="panelTab" aria-expanded="false" aria-controls="panel">
+                <span class="chev" aria-hidden="true">▲</span>
+                <span class="tabLabel">CONTROLS</span>
+            </button>
+            <button id="quickPause" aria-label="Pause or resume">❚❚</button>
+            <button id="hudToggle" aria-pressed="false" aria-controls="hud">STATS</button>
+        </div>
+
+        <header id="hud" hidden>
             <span class="brand">LIFE...</span>
-            <span>GEN <b id="hudGen">0</b></span>
-            <span>ALIVE <b id="hudPop">0</b></span>
+            <span class="keep">GEN <b id="hudGen">0</b></span>
+            <span class="keep">ALIVE <b id="hudPop">0</b></span>
             <span>DRAWN <b id="hudDrawn">0</b></span>
             <span>TICK/S <b id="hudRate">0</b></span>
-            <span>FPS <b id="hudFps">0</b></span>
+            <span class="keep">FPS <b id="hudFps">0</b></span>
             <span>BEATS <b id="hudBeat">0</b></span>
             <span id="hudPerf" hidden>SIM <b id="perfSim">0</b>ms · SYNC <b id="perfSync">0</b>ms · FRAME <b id="perfFrame">0</b>ms · Q<b id="perfQuality">0</b></span>
         </header>
@@ -53,7 +62,7 @@
                     <button id="step">STEP</button>
                     <button id="clear">CLEAR</button>
                 </div>
-                <p class="hint">space pauses · s steps · c clears · r re-seeds · drag to orbit</p>
+                <p class="hint">tap the lattice to re-seed · drag to rotate · pinch or scroll to zoom<br>space pauses · s steps · c clears · r re-seeds</p>
             </section>
 
             <section>

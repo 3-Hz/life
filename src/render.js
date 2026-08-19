@@ -123,6 +123,10 @@ export class VoxelRenderer {
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.07;
         this.controls.target.set(0, 0, 0);
+        // Panning slides the lattice off-centre with no easy way back, which is
+        // the one camera gesture that only ever gets in the way here. Rotate
+        // (one finger, left drag) and zoom (pinch, wheel) stay.
+        this.controls.enablePan = false;
 
         // Palette carried over from the material this shader replaces, so the
         // app still reads as itself.
@@ -179,6 +183,21 @@ export class VoxelRenderer {
         this.scene.add(this.mesh);
     }
 
+    // Distance is chosen so the lattice fits whichever field-of-view axis is
+    // narrower. Deriving it from lattice size alone -- as this used to -- crops
+    // badly on a tall narrow screen: at a 0.46 aspect the cube projected well
+    // outside the frame on both sides.
+    frameLattice() {
+        const radius = this.n * Math.sqrt(3) / 2; // corner-to-centre of the cube
+        const vFov = THREE.MathUtils.degToRad(this.camera.fov);
+        const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
+        const distance = radius / Math.sin(Math.min(vFov, hFov) / 2) * 1.05;
+        // Keep the viewer's angle, change only how far out we sit.
+        this.camera.position.setLength(distance);
+        this.controls.minDistance = distance * 0.25;
+        this.controls.maxDistance = distance * 3;
+    }
+
     rebuildBounds(n) {
         if (this.bounds) {
             this.scene.remove(this.bounds);
@@ -201,7 +220,6 @@ export class VoxelRenderer {
         this.material.uniforms.uHalf.value = (n - 1) / 2;
         this.material.uniforms.uFogNear.value = n * 1.6;
         this.material.uniforms.uFogFar.value = n * 4.5;
-        this.camera.position.setLength(n * 1.9);
 
         this.buildMesh(n);
         this.rebuildBounds(n);
@@ -291,6 +309,7 @@ export class VoxelRenderer {
         const height = this.canvas.clientHeight || window.innerHeight;
         this.renderer.setSize(width, height, false);
         this.camera.aspect = width / height;
+        this.frameLattice();
         this.camera.updateProjectionMatrix();
     }
 

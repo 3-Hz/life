@@ -54,6 +54,13 @@ export function bindUI(app) {
         perfSync: $('perfSync'),
         perfFrame: $('perfFrame'),
         perfQuality: $('perfQuality'),
+        view: $('view'),
+        hud: $('hud'),
+        dock: $('dock'),
+        panel: $('panel'),
+        panelTab: $('panelTab'),
+        quickPause: $('quickPause'),
+        hudToggle: $('hudToggle'),
     };
 
     buildRuleOptions(els.rule);
@@ -94,10 +101,95 @@ export function bindUI(app) {
     els.seed.addEventListener('click', () => app.seed());
     els.clear.addEventListener('click', () => app.clear());
     els.step.addEventListener('click', () => app.stepOnce());
-    els.pause.addEventListener('click', () => {
-        app.togglePause();
+    const syncPause = () => {
         els.pause.textContent = app.paused ? 'PLAY' : 'PAUSE';
+        els.quickPause.textContent = app.paused ? '▶' : '❚❚';
+    };
+    const togglePause = () => {
+        app.togglePause();
+        syncPause();
+    };
+    els.pause.addEventListener('click', togglePause);
+    els.quickPause.addEventListener('click', togglePause);
+
+    //-------PANEL-------
+    // The tab is the only thing that opens and closes the panel. A tap on the
+    // canvas re-seeds, so it deliberately does not double as a dismiss.
+    const setPanelOpen = (open) => {
+        document.body.classList.toggle('panel-closed', !open);
+        els.panelTab.setAttribute('aria-expanded', String(open));
+    };
+    // Open by default only where there is room for it. A rail costs a desktop
+    // almost nothing, but on a landscape phone it still eats 40% of the screen,
+    // and a portrait sheet eats most of it.
+    setPanelOpen(window.matchMedia('(min-width: 900px) and (orientation: landscape)').matches);
+    els.panelTab.addEventListener('click', () => {
+        setPanelOpen(document.body.classList.contains('panel-closed'));
     });
+
+    els.hudToggle.addEventListener('click', () => {
+        const showing = els.hud.hidden;
+        els.hud.hidden = !showing;
+        els.hudToggle.setAttribute('aria-pressed', String(showing));
+    });
+
+    // The panel clears the dock by the dock's real size. Hard-coding it meant
+    // the dock covered the last row of controls, since 44px touch targets plus
+    // padding come out taller than any round number guessed in CSS.
+    // Portrait clears the dock's height below the panel; landscape insets the
+    // panel by its width beside it. Both are measured rather than guessed --
+    // 44px touch targets plus padding never match a round number in CSS.
+    const syncDockMetrics = () => {
+        const box = els.dock.getBoundingClientRect();
+        const root = document.documentElement.style;
+        root.setProperty('--dock', `${box.height}px`);
+        root.setProperty('--dock-w', `${box.width}px`);
+    };
+    syncDockMetrics();
+    window.addEventListener('resize', syncDockMetrics);
+    window.addEventListener('orientationchange', syncDockMetrics);
+    if (window.ResizeObserver) new ResizeObserver(syncDockMetrics).observe(els.dock);
+
+    //-------CANVAS GESTURES-------
+    // Tap re-seeds; drag rotates; pinch zooms. Re-seeding throws the board away,
+    // so the discrimination errs toward "that was a drag": a rotate misread as a
+    // tap destroys what you were watching, while a tap misread as a drag costs
+    // nothing.
+    const TAP_SLOP_PX = 12;
+    const TAP_MS = 300;
+    let tap = null;
+    els.view.addEventListener('pointerdown', (event) => {
+        // A second finger means pinch-zoom, never a tap.
+        tap = tap === null && event.isPrimary
+            ? { x: event.clientX, y: event.clientY, t: performance.now(), id: event.pointerId }
+            : undefined;
+    });
+    els.view.addEventListener('pointermove', (event) => {
+        if (!tap || event.pointerId !== tap.id) return;
+        if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > TAP_SLOP_PX) tap = undefined;
+    });
+    const endTap = (event) => {
+        const candidate = tap;
+        tap = null;
+        if (!candidate || event.pointerId !== candidate.id) return;
+        if (performance.now() - candidate.t > TAP_MS) return;
+        if (Math.hypot(event.clientX - candidate.x, event.clientY - candidate.y) > TAP_SLOP_PX) return;
+        app.seed();
+    };
+    els.view.addEventListener('pointerup', endTap);
+    els.view.addEventListener('pointercancel', () => { tap = null; });
+
+    // Screen capture does not exist on mobile browsers, so these two sources
+    // cannot work there. Detect rather than sniff the platform.
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+        for (const source of ['system', 'tab']) {
+            const button = document.querySelector(`[data-source="${source}"]`);
+            if (button) {
+                button.disabled = true;
+                button.title = 'This browser cannot capture screen or tab audio';
+            }
+        }
+    }
 
     // Audio source buttons. Each is its own click, because every capture path
     // needs a user gesture and most need a permission prompt.
@@ -119,8 +211,7 @@ export function bindUI(app) {
         if (event.target.matches('input, select, textarea')) return;
         if (event.key === ' ') {
             event.preventDefault();
-            app.togglePause();
-            els.pause.textContent = app.paused ? 'PLAY' : 'PAUSE';
+            togglePause();
         } else if (event.key === 's' || event.key === 'S') app.stepOnce();
         else if (event.key === 'c' || event.key === 'C') app.clear();
         else if (event.key === 'r' || event.key === 'R') app.seed();

@@ -41,12 +41,34 @@ capture needs a permission prompt on top of that.
 | PAUSE / PLAY | `space` | Stops and resumes |
 | STEP | `s` | Pauses, then advances one generation |
 | CLEAR | `c` | Empties the lattice |
-| — | drag | Orbits the camera; scroll zooms |
+
+On the lattice itself: **tap or click to re-seed**, **drag to rotate**, **pinch
+or scroll to zoom**. Camera panning is deliberately absent — it only ever slid
+the lattice off-centre with no easy way back.
+
+Re-seeding on tap means a drag misread as a tap would throw the board away, so
+the threshold errs the other way: anything past ~12px or ~300ms is a drag.
 
 **Wrap edges** makes the lattice toroidal (the default) so cells at the faces
 have full neighborhoods. **Never let it die** reseeds a burst whenever the
 population collapses, so the toy is never empty when no audio is driving it.
 **Adapt quality to frame rate** is described under Performance below.
+
+## Layout
+
+One panel, collapsible everywhere, placed by orientation rather than by device:
+a rail on the right in landscape, a sheet at the bottom in portrait. The tab
+opens and closes it — tapping the lattice never does, since that re-seeds.
+Alongside the tab sit play/pause and a stats toggle; the HUD is off by default
+and trims to GEN, ALIVE and FPS on a narrow screen, where seven stats do not fit.
+
+The panel starts open only where there is room (landscape, 900px or wider). On a
+phone it starts collapsed, leaving about 93% of the screen to the automaton
+against 37% before this pass.
+
+The camera fits the lattice to whichever field-of-view axis is narrower, so a
+tall narrow screen no longer crops it — deriving the distance from lattice size
+alone cut roughly 40% of the width off a portrait phone.
 
 ## Rules
 
