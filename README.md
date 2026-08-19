@@ -55,19 +55,54 @@ survival range and a birth range, in Bays' four-digit notation — survival
 min/max, birth min/max — so `4555` survives on 4–5 neighbors and is born on
 exactly 5. Counts above 9 need the range form, `S7-12/B9-12`.
 
-Both forms work in the custom field. The presets were picked by measurement, not
-taste — a scan over the rule space looking for lattices that stay populated
-*and* keep changing:
+Both forms work in the custom field. The dropdown is ordered as a dial: how much
+of the visible structure survives each step. High persistence reads as an
+organism breathing; low persistence reads as boiling static, because the lattice
+is being replaced rather than evolved.
 
-| Preset | Behavior from random soup |
-| --- | --- |
-| `S7-12/B9-12` | Wispy amoeba, decays slowly — the default |
-| `S9/B7-10` | Compacts into a dense churning ball |
-| `5-7/6-8` | Self-sustaining, holds ~28% of the lattice indefinitely |
-| `4555`, `5766` | Bays' classics. **These die out from random soup** — they were built for hand-placed structures. With audio connected, beats keep reblooming them, which is a look of its own |
+| Preset | live | persists per step | reads as |
+| --- | --- | --- | --- |
+| `S6-11/B4-4` | 32% | 91% | slow, coherent, breathing |
+| `S6-14/B3-3` | 30% | 89% | slow, rippling surfaces |
+| `4733` | 25% | 76% | **default** — lively but coherent |
+| `5933` | 26% | 77% | similar, looser |
+| `5855` | 27% | 46% | agitated, half replaced each step |
+| `5-7/6-8` | 29% | 0% | boiling static, and the most expensive to draw |
+| `4555`, `5766` | — | — | Bays' classics. **These die from random soup** — built for hand-placed structures. Beats keep reblooming them, which is a look of its own |
 
-Most rules either die, decay, or saturate from soup; a rule that stays sparse and
-lively on its own is rare. That is what the beat injection is for.
+Figures are 48³ over 300 generations, from the seeding `seed()` actually uses.
+That qualifier is load-bearing: **rules are extremely sensitive to how the
+lattice is seeded.** An earlier default was chosen against a denser, full-lattice
+seeding and shipped effectively dead — it collapsed to 29 live cells under the
+seeding the app really uses, surviving only the one configuration it was measured
+against. A test now runs every preset from the real seeding, which is the check
+that would have caught it.
+
+Candidates had to stay alive across three different seedings to qualify; only ten
+rules in this family do. **Sparse and robust barely coexist here** — nothing
+under ~23% live survives varied seeding without freezing into a static crystal.
+That is a property of the rule family, not a tuning choice.
+
+The presets live in `RULE_PRESETS` in `src/automata.js`; the dropdown and the
+test both read from it, so there is one list rather than two that drift.
+
+## Step rate and motion
+
+The automaton runs at **20 steps/sec** with no audio, and loudness drives it
+between 2 and 60. Sensitivity is a gain on that, not a ceiling — it used to
+scale loudness *before* the response curve, so at its default 60% even maximum
+loudness reached only 16 steps/sec and ordinary music sat near 7.
+
+Births grow in and deaths shrink away across the gap between generations, so the
+lattice moves continuously rather than holding one frozen image for several
+frames. Two things follow from that:
+
+- **Smoothing and the top of the rate range are alternatives, not cumulative.**
+  Above roughly one step per frame there is no gap left to animate, and the
+  interpolation correctly becomes a no-op.
+- **Dying cells cost instances**, since they are drawn while shrinking. That is
+  about +12% on the default rule and nearly double on `5-7/6-8`, which is why
+  the boiling preset is also the expensive one.
 
 ## Performance
 
@@ -103,6 +138,11 @@ recover when there is headroom. Lattice size does not: shrinking reallocates and
 reseeds, so reversing it would throw the board away a second time. Raise it back
 by hand when you want it. Phones start at 32³ with antialiasing off and a lower
 pixel-ratio ceiling.
+
+The controller ignores the first four seconds. Startup frames are slow for
+reasons that say nothing about steady state — shaders compiling, buffers
+uploading — and judging quality on them would walk the lattice down before the
+page had drawn anything, permanently, since the size drop is one-way.
 
 ## Layout
 

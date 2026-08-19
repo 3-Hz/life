@@ -67,3 +67,36 @@ test('targets switch individual effects off', () => {
     assert.equal(visual.dolly, 0);
     assert.equal(visual.voxelScale, TUNING.voxelScale.max);
 });
+
+test('the sensitivity slider is a gain, not a ceiling', () => {
+    // It used to scale loudness before the response curve, so at its default
+    // 60% even maximum loudness reached only 16 of a possible 24 steps/sec and
+    // ordinary music sat near 7. That is what made the automaton look like a
+    // slideshow, so it is worth pinning down.
+    const music = { ...silence, level: 0.5 };
+    const atDefault = mapToSim(music, 0.6).tickRate;
+    assert.ok(atDefault > 25, `ordinary music at the default slider should step briskly, got ${atDefault.toFixed(1)}/sec`);
+
+    const full = mapToSim({ ...silence, level: 1 }, 1).tickRate;
+    assert.equal(full, TUNING.tickRate.max, 'full loudness at full sensitivity must reach the ceiling');
+
+    // Monotonic in both arguments, so the slider always does what it looks like.
+    let previous = -Infinity;
+    for (const level of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
+        const rate = mapToSim({ ...silence, level }, 0.6).tickRate;
+        assert.ok(rate >= previous, 'louder audio must never step slower');
+        previous = rate;
+    }
+    previous = -Infinity;
+    for (const s of [0, 0.25, 0.5, 0.75, 1]) {
+        const rate = mapToSim({ ...silence, level: 0.5 }, s).tickRate;
+        assert.ok(rate >= previous, 'raising sensitivity must never step slower');
+        previous = rate;
+    }
+});
+
+test('silence still rests at the floor whatever the slider says', () => {
+    for (const s of [0, 0.5, 1]) {
+        assert.equal(mapToSim(silence, s).tickRate, TUNING.tickRate.min);
+    }
+});

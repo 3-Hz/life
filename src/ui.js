@@ -2,8 +2,27 @@
 // the app object it is handed.
 
 import { SOURCES } from './audio.js';
+import { RULE_PRESETS } from './automata.js';
 
 const $ = (id) => document.getElementById(id);
+
+// The dropdown is the dial: presets in order of how much of the lattice
+// survives each step, from breathing to boiling.
+function buildRuleOptions(select) {
+    for (const preset of RULE_PRESETS) {
+        const option = document.createElement('option');
+        option.value = preset.rule;
+        option.textContent = preset.persists === undefined
+            ? `${preset.rule} — ${preset.label}`
+            : `${preset.rule} — ${preset.persists}% persists, ${preset.label}`;
+        if (preset.default) option.selected = true;
+        select.appendChild(option);
+    }
+    const custom = document.createElement('option');
+    custom.value = 'custom';
+    custom.textContent = 'custom…';
+    select.appendChild(custom);
+}
 
 export function bindUI(app) {
     const els = {
@@ -36,6 +55,8 @@ export function bindUI(app) {
         perfFrame: $('perfFrame'),
         perfQuality: $('perfQuality'),
     };
+
+    buildRuleOptions(els.rule);
 
     els.rule.addEventListener('change', () => {
         if (els.rule.value === 'custom') {

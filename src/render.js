@@ -11,23 +11,35 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 // keeps the per-tick upload four times smaller than float offsets would.
 
 const VERTEX_SHADER = /* glsl */ `
-    attribute vec4 aCell;   // xyz = lattice coordinate, w = age
-    attribute float aCount; // live neighbors, 0-26
+    attribute vec4 aCell;  // xyz = lattice coordinate, w = age
+    attribute vec2 aData;  // x = live neighbors 0-26, y = state (0 steady, 1 born, 2 dying)
 
     uniform float uScale;
     uniform float uHalf;
+    uniform float uPhase; // progress toward the next generation, 0-1
 
     varying float vAge;
     varying float vCount;
+    varying float vDying;
     varying vec3 vNormal;
     varying float vDepth;
 
     void main() {
         vAge = aCell.w / 255.0;
-        vCount = aCount;
+        vCount = aData.x;
         vNormal = normalMatrix * normal;
 
-        vec3 world = position * uScale + (aCell.xyz - uHalf);
+        // Births grow in and deaths shrink away across the gap between
+        // generations, so the lattice moves continuously instead of snapping
+        // between frozen frames. Above one step per frame there is no gap left
+        // to animate and phase saturates, which correctly makes this a no-op.
+        float eased = uPhase * uPhase * (3.0 - 2.0 * uPhase);
+        float born = step(0.5, aData.y) * step(aData.y, 1.5);
+        float dying = step(1.5, aData.y);
+        vDying = dying;
+        float life = mix(1.0, eased, born) * mix(1.0, 1.0 - eased, dying);
+
+        vec3 world = position * uScale * life + (aCell.xyz - uHalf);
         vec4 viewPos = modelViewMatrix * vec4(world, 1.0);
         vDepth = -viewPos.z;
         gl_Position = projectionMatrix * viewPos;
@@ -49,6 +61,7 @@ const FRAGMENT_SHADER = /* glsl */ `
 
     varying float vAge;
     varying float vCount;
+    varying float vDying;
     varying vec3 vNormal;
     varying float vDepth;
 
@@ -62,7 +75,11 @@ const FRAGMENT_SHADER = /* glsl */ `
 
         // Age ramp, matching the old CPU-side HSL walk: saturates around 22
         // generations, so young cells read hot and settled ones cool.
+        // A dying cell's age was already reset to zero by the rule pass, so it
+        // would otherwise flash back to the young colour on its way out. Hold it
+        // at the far end of the ramp instead: cells cool as they go.
         float age = clamp(vAge * 6.0, 0.0, 1.0);
+        age = max(age, vDying);
         vec3 base = mix(uYoung, uOld, age) * uTint;
 
         // Ambient occlusion for free: the simulation already counted these
@@ -115,6 +132,7 @@ export class VoxelRenderer {
             uniforms: {
                 uScale: { value: 0.9 },
                 uHalf: { value: (n - 1) / 2 },
+                uPhase: { value: 1 },
                 uYoung: { value: new THREE.Color().setHSL(0.58, 0.75, 0.35) },
                 uOld: { value: new THREE.Color().setHSL(0.06, 0.75, 0.63) },
                 uTint: { value: new THREE.Color(1, 1, 1) },
@@ -140,7 +158,7 @@ export class VoxelRenderer {
     buildMesh(n) {
         const capacity = n * n * n;
         this.cellData = new Uint8Array(capacity * 4); // x, y, z, age
-        this.countData = new Uint8Array(capacity);    // live neighbors
+        this.stateData = new Uint8Array(capacity * 2); // live neighbors, state
 
         const box = new THREE.BoxGeometry(1, 1, 1);
         const geometry = new THREE.InstancedBufferGeometry();
@@ -150,10 +168,10 @@ export class VoxelRenderer {
 
         this.cellAttribute = new THREE.InstancedBufferAttribute(this.cellData, 4);
         this.cellAttribute.setUsage(THREE.DynamicDrawUsage);
-        this.countAttribute = new THREE.InstancedBufferAttribute(this.countData, 1);
-        this.countAttribute.setUsage(THREE.DynamicDrawUsage);
+        this.stateAttribute = new THREE.InstancedBufferAttribute(this.stateData, 2);
+        this.stateAttribute.setUsage(THREE.DynamicDrawUsage);
         geometry.setAttribute('aCell', this.cellAttribute);
-        geometry.setAttribute('aCount', this.countAttribute);
+        geometry.setAttribute('aData', this.stateAttribute);
         geometry.instanceCount = 0;
 
         this.mesh = new THREE.Mesh(geometry, this.material);
@@ -198,16 +216,22 @@ export class VoxelRenderer {
     }
 
     //-------PER-TICK-------
-    // The whole per-cell cost of a tick: five bytes each, no matrices, no color
+    // The whole per-cell cost of a tick: six bytes each, no matrices, no color
     // conversion. Cells with all 26 neighbors alive are skipped -- they cannot
     // be seen, and the test is free because the simulation already counted them.
+    //
+    // Cells that died this step are emitted too, flagged so the shader can
+    // shrink them away rather than blinking them out. That costs extra instances
+    // in proportion to churn: about +12% on a rule that replaces a quarter of
+    // itself each step, and nearly double on one that replaces everything.
     syncLattice(lattice) {
         const n = lattice.n;
         const cells = lattice.cells;
+        const previous = lattice.previous;
         const age = lattice.age;
         const counts = lattice.counts;
         const cellData = this.cellData;
-        const countData = this.countData;
+        const stateData = this.stateData;
 
         let k = 0;
         for (let z = 0; z < n; z++) {
@@ -215,16 +239,21 @@ export class VoxelRenderer {
                 const row = n * (y + n * z);
                 for (let x = 0; x < n; x++) {
                     const i = row + x;
-                    if (!cells[i]) continue;
+                    const alive = cells[i];
+                    const was = previous[i];
+                    if (!alive && !was) continue;
                     const count = counts[i];
-                    if (count === 26) continue;
+                    if (alive && count === 26) continue;
 
                     const o = k * 4;
                     cellData[o] = x;
                     cellData[o + 1] = y;
                     cellData[o + 2] = z;
                     cellData[o + 3] = age[i];
-                    countData[k] = count;
+
+                    const s = k * 2;
+                    stateData[s] = count;
+                    stateData[s + 1] = alive ? (was ? 0 : 1) : 2; // steady / born / dying
                     k++;
                 }
             }
@@ -233,7 +262,13 @@ export class VoxelRenderer {
         this.drawn = k;
         this.mesh.geometry.instanceCount = k;
         this.cellAttribute.needsUpdate = true;
-        this.countAttribute.needsUpdate = true;
+        this.stateAttribute.needsUpdate = true;
+    }
+
+    // Progress toward the next generation, so births and deaths animate across
+    // the gap rather than snapping at the moment of the step.
+    setPhase(phase) {
+        this.material.uniforms.uPhase.value = phase;
     }
 
     //-------PER-FRAME-------

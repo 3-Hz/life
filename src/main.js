@@ -6,11 +6,11 @@ import { SoundCloudPlayer } from './player.js';
 import { mapToSim, mapToVisual, shiftBirth, TARGETS } from './mapping.js';
 import { bindUI, isMac } from './ui.js';
 
-const DEFAULT_RULE = 'S7-12/B9-12';
+const DEFAULT_RULE = '4733';
 const SEED_DENSITY = 0.18;
 // Without audio there is no loudness to read, and the audio-driven floor of
 // 2 ticks/sec reads as a frozen app. Silence gets its own pace instead.
-const SILENT_TICK_RATE = 8;
+const SILENT_TICK_RATE = 20;
 // Measured across the rule space: from random soup these rules either die out,
 // decay slowly, or saturate. Beats keep a decaying lattice blooming, but with
 // no audio connected the toy would sit empty -- so it reseeds itself. Life,
@@ -25,15 +25,21 @@ const DEFAULT_SIZE = MOBILE ? 32 : 48;
 // Quality rungs, cheapest visual cost first. The controller walks down this
 // list under load and back up when there is headroom.
 const QUALITY_LEVELS = [
-    { pixelRatio: 2.0, tickCeiling: 24, sizeCap: null },
-    { pixelRatio: 1.5, tickCeiling: 24, sizeCap: null },
-    { pixelRatio: 1.0, tickCeiling: 15, sizeCap: null },
-    { pixelRatio: 0.75, tickCeiling: 10, sizeCap: 48 },
-    { pixelRatio: 0.75, tickCeiling: 10, sizeCap: 32 },
+    { pixelRatio: 2.0, tickCeiling: 60, sizeCap: null },
+    { pixelRatio: 1.5, tickCeiling: 40, sizeCap: null },
+    { pixelRatio: 1.0, tickCeiling: 25, sizeCap: null },
+    { pixelRatio: 0.75, tickCeiling: 15, sizeCap: 48 },
+    { pixelRatio: 0.75, tickCeiling: 15, sizeCap: 32 },
 ];
 const SLOW_FRAME_MS = 20;   // below ~50fps
 const FAST_FRAME_MS = 12;   // comfortably above 60fps
 const LEVEL_DWELL_MS = 1500; // hysteresis, so it cannot oscillate
+// The first seconds are slow for reasons that say nothing about steady state:
+// shaders compile, buffers upload, the first instances are written. Judging
+// quality on those frames walks the lattice down a level or three before the
+// app has drawn anything — and the size drop is deliberately one-way, so that
+// would throw the board away before the viewer ever saw it.
+const WARMUP_MS = 4000;
 
 class App {
     constructor() {
@@ -62,7 +68,9 @@ class App {
         this.timing = { sim: 0, sync: 0, frame: 0, draws: 0 };
 
         this._accumulator = 0;
-        this._last = performance.now();
+        this._phase = 1;
+        this._startedAt = performance.now();
+        this._last = this._startedAt;
         this._fps = 60;
         this._frameMs = 16;
         this._hudDue = 0;
@@ -159,6 +167,7 @@ class App {
     // whether or not the average still looks acceptable.
     updateQuality(now) {
         if (!this.autoQuality) return;
+        if (now - this._startedAt < WARMUP_MS) return;
         if (now - this._levelChangedAt < LEVEL_DWELL_MS) return;
 
         if (this._frameMs > SLOW_FRAME_MS && this.qualityLevel < QUALITY_LEVELS.length - 1) {
@@ -227,6 +236,12 @@ class App {
             // Whatever the tick cap left behind is dropped, so a stall cannot
             // build a backlog that runs forever.
             if (this._accumulator > interval) this._accumulator = interval;
+            // How far along we are toward the next generation. Births and deaths
+            // animate across this, so the lattice moves continuously between
+            // steps instead of holding one frozen image for several frames.
+            this._phase = Math.min(this._accumulator / interval, 1);
+        } else {
+            this._phase = 1; // paused: show the current generation settled
         }
         const simMs = performance.now() - simStart;
 
@@ -249,12 +264,14 @@ class App {
             this._dirty = false;
         }
 
-        // Draw only when something moved. With the sim paused, no audio and the
-        // camera at rest there is nothing new to put on screen.
+        // Draw only when something moved. While running, the in-between
+        // animation is itself movement, so every frame counts; paused, with no
+        // audio and the camera at rest, there is nothing new to put on screen.
         this.renderer.applyVisual(visual);
+        this.renderer.setPhase(this._phase);
         const cameraMoved = this.renderer.updateControls();
         const audioLive = this.audio.active;
-        if (ticks > 0 || syncMs > 0 || cameraMoved || audioLive) {
+        if (!this.paused || ticks > 0 || syncMs > 0 || cameraMoved || audioLive) {
             this.renderer.render();
             this.timing.draws++;
         }

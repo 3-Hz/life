@@ -1,7 +1,7 @@
 // Zero-dependency tests: node --test test/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Lattice, parseRule, formatRule } from '../src/automata.js';
+import { Lattice, parseRule, formatRule, RULE_PRESETS } from '../src/automata.js';
 import { mulberry32 } from '../src/rng.js';
 
 function randomLattice(n, wrap, seed, density = 0.3) {
@@ -210,4 +210,86 @@ test('malformed rules throw', () => {
     }
     assert.throws(() => parseRule(4555));
     assert.throws(() => new Lattice(2));
+});
+
+//-------Presets-------
+// The test that matters most here. An earlier default shipped dead: it was
+// chosen against a denser, full-lattice seeding and collapsed to 29 live cells
+// under the seeding the app actually uses. Every preset now has to survive the
+// real thing.
+test('every shipped preset stays alive and in range from the app\'s own seeding', () => {
+    const N = 48;
+    const SEED_DENSITY = 0.18;          // must mirror main.js
+    const MARGIN = Math.floor(N / 4);   // must mirror main.js
+
+    for (const preset of RULE_PRESETS) {
+        if (preset.fragile) continue;   // Bays' classics need beats, by design
+
+        const lattice = new Lattice(N, { wrap: true });
+        const rule = parseRule(preset.rule);
+        lattice.seedRandom(SEED_DENSITY, mulberry32(0xC0FFEE), { margin: MARGIN });
+        for (let g = 0; g < 200; g++) lattice.step(rule);
+
+        const population = lattice.population();
+        const share = population / lattice.size;
+        assert.ok(
+            share >= 0.05 && share <= 0.40,
+            `${preset.rule}: ${population} live (${(100 * share).toFixed(1)}%) after 200 generations, outside 5-40%`,
+        );
+
+        const before = lattice.cells.slice();
+        lattice.step(rule);
+        let changed = 0;
+        for (let i = 0; i < lattice.size; i++) if (before[i] !== lattice.cells[i]) changed++;
+        const churn = changed / population;
+        assert.ok(
+            churn >= 0.02 && churn <= 1.7,
+            `${preset.rule}: churn ${(100 * churn).toFixed(0)}% of live cells — frozen or re-rolling`,
+        );
+    }
+});
+
+test('preset metadata is coherent and exactly one is the default', () => {
+    const defaults = RULE_PRESETS.filter((p) => p.default);
+    assert.equal(defaults.length, 1, 'exactly one preset must be marked default');
+    assert.ok(!defaults[0].fragile, 'the default must not be a rule that dies from soup');
+
+    for (const preset of RULE_PRESETS) {
+        assert.doesNotThrow(() => parseRule(preset.rule), `unparseable preset: ${preset.rule}`);
+        assert.ok(preset.label, `preset ${preset.rule} needs a label`);
+    }
+});
+
+//-------Previous generation, for the render animation-------
+test('previous holds the prior generation, so births and deaths are separable', () => {
+    const lattice = new Lattice(12, { wrap: true });
+    const rule = parseRule('4733');
+    lattice.seedRandom(0.25, mulberry32(4));
+
+    for (let g = 0; g < 6; g++) {
+        const before = lattice.cells.slice();
+        lattice.step(rule);
+        assert.deepEqual(
+            Array.from(lattice.previous), Array.from(before),
+            'previous must be the board the step read from',
+        );
+
+        // The classification the renderer derives from it must match a direct
+        // comparison of the two boards.
+        let born = 0, steady = 0, dying = 0;
+        for (let i = 0; i < lattice.size; i++) {
+            const now = lattice.cells[i], was = lattice.previous[i];
+            if (now && !was) born++;
+            else if (now && was) steady++;
+            else if (!now && was) dying++;
+        }
+        let expectBorn = 0, expectSteady = 0, expectDying = 0;
+        for (let i = 0; i < lattice.size; i++) {
+            if (lattice.cells[i] && !before[i]) expectBorn++;
+            else if (lattice.cells[i] && before[i]) expectSteady++;
+            else if (!lattice.cells[i] && before[i]) expectDying++;
+        }
+        assert.deepEqual({ born, steady, dying }, { born: expectBorn, steady: expectSteady, dying: expectDying });
+        assert.equal(born + steady, lattice.population());
+    }
 });

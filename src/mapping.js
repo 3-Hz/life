@@ -2,7 +2,14 @@
 // nowhere else. Zero the sensitivity and the simulation is deterministic again.
 
 export const TUNING = {
-    tickRate: { min: 2, max: 24 },
+    tickRate: { min: 2, max: 60 },
+    // Sensitivity used to scale loudness before the response curve, which made
+    // the slider a ceiling rather than a gain: at its default 60%, even maximum
+    // loudness reached only 16 steps/sec. This gain restores headroom, while
+    // still multiplying sensitivity so that zeroing the slider zeroes every
+    // audio effect and the simulation stays deterministic.
+    levelGain: 2.0,
+    levelCurve: 1.2,
     burst: { radiusMin: 3, radiusMax: 6, density: 0.45 },
     birthShift: 1,        // how far the centroid may slide the birth window
     voxelScale: { min: 0.7, max: 1.0 },
@@ -28,8 +35,9 @@ export function mapToSim(features, sensitivity, targets = TARGETS) {
     const s = clamp(sensitivity, 0, 1);
     const level = features.level * s;
 
+    const drive = clamp(level * TUNING.levelGain, 0, 1) ** TUNING.levelCurve;
     const tickRate = targets.tickRate
-        ? lerp(TUNING.tickRate.min, TUNING.tickRate.max, smoothstep(level))
+        ? lerp(TUNING.tickRate.min, TUNING.tickRate.max, drive)
         : TUNING.tickRate.min + (TUNING.tickRate.max - TUNING.tickRate.min) * 0.35;
 
     // A bright mix nudges birth toward being easier, a dark one toward harder.
@@ -69,9 +77,4 @@ export function shiftBirth(rule, shift) {
     const bMax = clamp(rule.bMax + shift, 0, 26);
     if (bMin > bMax) return rule;
     return { ...rule, bMin, bMax };
-}
-
-function smoothstep(t) {
-    const x = clamp(t, 0, 1);
-    return x * x * (3 - 2 * x);
 }

@@ -44,12 +44,30 @@ export function formatRule(rule) {
     return `S${sMin}-${sMax}/B${bMin}-${bMax}`;
 }
 
-export const RULE_PRESETS = {
-    '4555': 'Bays 4555',
-    '5766': 'Bays 5766',
-    '4-5/5-5': 'Clouds-ish',
-    '5-7/6-8': 'Dense',
-};
+// The shipped presets, ordered so the dropdown itself is a dial from a lattice
+// that mostly persists to one that replaces itself entirely each step.
+//
+// `persists` is the share of live cells that survive a step, measured at 48³
+// over 300 generations from the seeding seed() actually uses. It is the number
+// that predicts how the rule feels, and picking presets without measuring it
+// against the real seeding is how an earlier default shipped dead: it survived
+// only the denser, full-lattice seeding it was chosen under.
+//
+// The UI builds the rule dropdown from this, and a test runs every entry, so
+// there is one list rather than two that can drift apart.
+export const RULE_PRESETS = [
+    { rule: 'S6-11/B4-4', persists: 91, label: 'breathing' },
+    { rule: 'S6-14/B3-3', persists: 89, label: 'rippling' },
+    { rule: '4733', persists: 76, label: 'lively', default: true },
+    { rule: '5933', persists: 77, label: 'looser' },
+    { rule: '5855', persists: 46, label: 'agitated' },
+    { rule: '5-7/6-8', persists: 0, label: 'boiling' },
+    // Bays' classics. They die from random soup -- they were built for
+    // hand-placed structures -- but beats keep reblooming them, which is a look
+    // of its own. Excluded from the survival test for that reason.
+    { rule: '4555', label: 'Bays, dies without beats', fragile: true },
+    { rule: '5766', label: 'Bays, dies without beats', fragile: true },
+];
 
 //-------LATTICE-------
 export class Lattice {
@@ -82,6 +100,18 @@ export class Lattice {
 
     set(x, y, z, value) {
         this.cells[this.index(x, y, z)] = value ? 1 : 0;
+    }
+
+    // The generation before the current one, so the renderer can tell a cell
+    // that was just born from one that has been alive, and animate each.
+    //
+    // No copy is involved: step() swaps cells and next, so the buffer now called
+    // `next` still holds the board step() read from. That makes this valid only
+    // between steps -- the next call to step() overwrites it. Seeding, clearing
+    // and injecting do not touch it, so after those it describes the board from
+    // before that edit, which is exactly what the animation should show.
+    get previous() {
+        return this.next;
     }
 
     clear() {

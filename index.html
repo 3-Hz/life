@@ -32,14 +32,9 @@
             <section>
                 <h2>Automaton</h2>
                 <label>Rule
-                    <select id="rule">
-                        <option value="S9-9/B7-10">S9/B7-10 — dense ball</option>
-                        <option value="5-7/6-8">5-7/6-8 — dense, self-sustaining</option>
-                        <option value="S7-12/B9-12" selected>S7-12/B9-12 — wispy, slow decay</option>
-                        <option value="4555">4555 — Bays, dies without beats</option>
-                        <option value="5766">5766 — Bays, dies without beats</option>
-                        <option value="custom">custom…</option>
-                    </select>
+                    <!-- Options are built from RULE_PRESETS in src/automata.js,
+                         so the list and the test that validates it cannot drift. -->
+                    <select id="rule"></select>
                 </label>
                 <input id="ruleCustom" type="text" placeholder="e.g. S4-5/B5" hidden>
                 <label>Lattice
