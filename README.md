@@ -66,9 +66,17 @@ The panel starts open only where there is room (landscape, 900px or wider). On a
 phone it starts collapsed, leaving about 93% of the screen to the automaton
 against 37% before this pass.
 
-The camera fits the lattice to whichever field-of-view axis is narrower, so a
-tall narrow screen no longer crops it — deriving the distance from lattice size
-alone cut roughly 40% of the width off a portrait phone.
+The camera fits and centres the lattice against the area the dock leaves, not
+the whole canvas. Fitting to lattice size alone cropped roughly 40% of the width
+off a portrait phone; centring on the canvas left the lattice 28px low behind a
+55px dock. The canvas itself stays full-bleed, so the lattice still shows through
+the translucent panel.
+
+Only permanent chrome counts, so the lattice does not move when the panel opens
+over it, and the offset is fixed rather than tracking the cube's projected
+outline, so it does not drift while you rotate. That leaves the cube's visual
+mass reading a few pixels low — perspective puts the near-bottom corners further
+out than the far-top ones — which is the deliberate cost of never moving.
 
 ## Rules
 

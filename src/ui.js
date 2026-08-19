@@ -133,17 +133,19 @@ export function bindUI(app) {
         els.hudToggle.setAttribute('aria-pressed', String(showing));
     });
 
-    // The panel clears the dock by the dock's real size. Hard-coding it meant
-    // the dock covered the last row of controls, since 44px touch targets plus
-    // padding come out taller than any round number guessed in CSS.
-    // Portrait clears the dock's height below the panel; landscape insets the
-    // panel by its width beside it. Both are measured rather than guessed --
+    // Everything that has to clear the dock reads its measured size: the panel
+    // sits beside or above it, and the renderer centres the lattice on what it
+    // leaves. Hard-coding it put the dock on top of the panel's last row, since
     // 44px touch targets plus padding never match a round number in CSS.
     const syncDockMetrics = () => {
         const box = els.dock.getBoundingClientRect();
         const root = document.documentElement.style;
         root.setProperty('--dock', `${box.height}px`);
         root.setProperty('--dock-w', `${box.width}px`);
+        // The renderer centres the lattice on what the dock leaves visible,
+        // mirroring where the CSS puts the dock in each orientation.
+        const portrait = window.matchMedia('(orientation: portrait)').matches;
+        app.renderer.setChromeInsets(portrait ? { bottom: box.height } : { right: box.width });
     };
     syncDockMetrics();
     window.addEventListener('resize', syncDockMetrics);

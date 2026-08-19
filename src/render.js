@@ -155,6 +155,10 @@ export class VoxelRenderer {
         this.rebuildBounds(n);
 
         this.drawn = 0;
+        // Permanent chrome covering part of the canvas. The canvas stays
+        // full-bleed -- the lattice shows through the translucent panel -- so
+        // the camera is told which part of it the viewer can actually see.
+        this.insets = { top: 0, right: 0, bottom: 0, left: 0 };
         this.resize();
     }
 
@@ -183,15 +187,51 @@ export class VoxelRenderer {
         this.scene.add(this.mesh);
     }
 
-    // Distance is chosen so the lattice fits whichever field-of-view axis is
-    // narrower. Deriving it from lattice size alone -- as this used to -- crops
-    // badly on a tall narrow screen: at a 0.46 aspect the cube projected well
-    // outside the frame on both sides.
-    frameLattice() {
+    // The rectangle the viewer can actually see: the canvas minus permanent
+    // chrome. Everything about framing and centring is expressed against this
+    // rather than against the canvas.
+    freeRect(width = this.canvas.clientWidth || window.innerWidth,
+             height = this.canvas.clientHeight || window.innerHeight) {
+        const { top, right, bottom, left } = this.insets;
+        const w = Math.max(1, width - left - right);
+        const h = Math.max(1, height - top - bottom);
+        return { width, height, w, h, cx: left + w / 2, cy: top + h / 2 };
+    }
+
+    setChromeInsets({ top = 0, right = 0, bottom = 0, left = 0 } = {}) {
+        this.insets = { top, right, bottom, left };
+        this.resize();
+    }
+
+    // Shifts the frustum, without scaling it, so the orbit target -- which is
+    // the lattice centre, since controls.target is the origin -- lands in the
+    // middle of the visible area instead of the middle of the canvas. Centring
+    // on the canvas put the lattice 28px low behind a 55px dock.
+    //
+    // This deliberately ignores the panel, even when open: the offset then
+    // depends only on permanent chrome, so nothing slides when the panel is
+    // toggled, and nothing drifts while the lattice is being rotated.
+    applyViewOffset(free) {
+        this.camera.setViewOffset(
+            free.width, free.height,
+            free.width / 2 - free.cx,
+            free.height / 2 - free.cy,
+            free.width, free.height,
+        );
+    }
+
+    // Distance is chosen so the lattice fits whichever axis of the *visible*
+    // rectangle is narrower. Deriving it from lattice size alone -- as this once
+    // did -- crops badly on a tall narrow screen: at a 0.46 aspect the cube
+    // projected well outside the frame on both sides.
+    frameLattice(free) {
         const radius = this.n * Math.sqrt(3) / 2; // corner-to-centre of the cube
         const vFov = THREE.MathUtils.degToRad(this.camera.fov);
-        const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
-        const distance = radius / Math.sin(Math.min(vFov, hFov) / 2) * 1.05;
+        // The free rect subtends a smaller angle than the whole canvas; both of
+        // its axes are measured against the canvas height, which is what the
+        // vertical field of view is defined over.
+        const halfAngle = Math.atan(Math.tan(vFov / 2) * Math.min(free.w, free.h) / free.height);
+        const distance = radius / Math.sin(halfAngle) * 1.05;
         // Keep the viewer's angle, change only how far out we sit.
         this.camera.position.setLength(distance);
         this.controls.minDistance = distance * 0.25;
@@ -309,8 +349,9 @@ export class VoxelRenderer {
         const height = this.canvas.clientHeight || window.innerHeight;
         this.renderer.setSize(width, height, false);
         this.camera.aspect = width / height;
-        this.frameLattice();
-        this.camera.updateProjectionMatrix();
+        const free = this.freeRect(width, height);
+        this.applyViewOffset(free); // also updates the projection matrix
+        this.frameLattice(free);
     }
 
     // Reports whether the camera is still settling, so the loop can skip draws
