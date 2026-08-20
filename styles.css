@@ -69,24 +69,41 @@ html, body {
     display: flex;
     gap: 0.4em;
     padding: 0.4em 0.6em;
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: transparent;
+    border: 0;
+    pointer-events: none;
 }
 
 #dock button {
-    min-width: 2.6em;
+    min-width: 2.8em;
+    min-height: 2.8em;
+    padding: 0.45em 0.7em;
     white-space: nowrap;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    box-shadow: 0 0.35em 1.2em #0008;
+    backdrop-filter: blur(10px);
+    pointer-events: auto;
 }
 
 #panelTab {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 0.5em;
     color: var(--accent);
     border-color: var(--accent);
 }
 
-#panelTab .chev { transition: transform 0.25s var(--ease); }
+#panelTab .chev {
+    display: grid;
+    place-items: center;
+    width: 1.1em;
+    height: 1.1em;
+    line-height: 1;
+    transform-origin: center;
+    transition: transform 0.25s var(--ease);
+}
 #hudToggle[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 
 /*-------PANEL-------*/
@@ -98,6 +115,7 @@ html, body {
     padding: 1em;
     background: var(--panel);
     border: 1px solid var(--line);
+    backdrop-filter: blur(12px);
     transition: transform 0.28s var(--ease);
 }
 
@@ -107,13 +125,51 @@ html, body {
     border-top: 1px solid var(--line);
 }
 
+/*-------AUDIO MODES-------*/
+.source-tabs {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.35em;
+    margin: 0.2em 0 0.7em;
+}
+
+.source-tab {
+    min-width: 0;
+    padding-inline: 0.35em;
+    color: var(--dim);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.source-tab[aria-selected="true"] {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: #1b2940;
+}
+
+.source-tab:disabled { opacity: 0.35; }
+
+.source-panel {
+    padding: 0.8em;
+    border: 1px solid var(--line);
+    border-radius: 0.5em;
+    background: #0d101b99;
+}
+
+.source-panel[hidden] { display: none; }
+.source-panel > :first-child { margin-top: 0; }
+.source-panel > :last-child { margin-bottom: 0; }
+.source-panel button { width: 100%; }
+.source-panel .track button { width: auto; }
+
 /*-------LANDSCAPE: a rail on the right, collapsing sideways-------*/
 @media (orientation: landscape) {
     #dock {
         top: 0;
         right: 0;
         flex-direction: column;
-        border-width: 0 0 1px 1px;
         padding-top: max(0.4em, env(safe-area-inset-top));
         padding-right: max(0.6em, env(safe-area-inset-right));
     }
@@ -132,6 +188,10 @@ html, body {
     body.panel-closed #panel { transform: translateX(calc(100% + var(--dock-w))); }
     #panelTab .chev { transform: rotate(-90deg); }
     body.panel-closed #panelTab .chev { transform: rotate(90deg); }
+    #panelTab {
+        width: 2.8em;
+        padding-inline: 0;
+    }
     #panelTab .tabLabel { display: none; }
 }
 
@@ -167,6 +227,10 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
     #panel, #panelTab .chev { transition: none; }
+}
+
+@media (max-width: 520px) {
+    .source-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /*-------CONTROLS-------*/
@@ -280,5 +344,5 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
     input[type="range"] { height: 44px; }
 
     /* A full-screen blur every frame, on a GPU already drawing the lattice. */
-    #panel, #dock { backdrop-filter: none; }
+    #panel, #dock, #dock button { backdrop-filter: none; }
 }

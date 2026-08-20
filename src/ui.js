@@ -63,6 +63,9 @@ export function bindUI(app) {
         hudToggle: $('hudToggle'),
     };
 
+    const sourceTabs = [...document.querySelectorAll('[role="tab"][data-source]')];
+    const sourcePanels = [...document.querySelectorAll('[role="tabpanel"][data-source-panel]')];
+
     buildRuleOptions(els.rule);
 
     els.rule.addEventListener('change', () => {
@@ -133,6 +136,44 @@ export function bindUI(app) {
         els.hudToggle.setAttribute('aria-pressed', String(showing));
     });
 
+    // Audio sources are modes, not a row of unrelated actions. Tabs only
+    // reveal a mode; the action inside each panel still owns the user gesture
+    // needed by permission prompts and AudioContext.
+    const activateSourceTab = (kind, { focus = false } = {}) => {
+        const tab = sourceTabs.find((candidate) => candidate.dataset.source === kind);
+        if (!tab || tab.disabled) return;
+
+        for (const candidate of sourceTabs) {
+            const selected = candidate === tab;
+            candidate.setAttribute('aria-selected', String(selected));
+            candidate.tabIndex = selected ? 0 : -1;
+        }
+        for (const panel of sourcePanels) {
+            panel.hidden = panel.dataset.sourcePanel !== kind;
+        }
+        if (focus) tab.focus();
+    };
+
+    const moveSourceTab = (event) => {
+        const enabled = sourceTabs.filter((tab) => !tab.disabled);
+        const current = enabled.indexOf(event.currentTarget);
+        if (current < 0) return;
+        let next = current;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (current + 1) % enabled.length;
+        else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (current - 1 + enabled.length) % enabled.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = enabled.length - 1;
+        else return;
+        event.preventDefault();
+        activateSourceTab(enabled[next].dataset.source, { focus: true });
+    };
+
+    for (const tab of sourceTabs) {
+        tab.addEventListener('click', () => activateSourceTab(tab.dataset.source));
+        tab.addEventListener('keydown', moveSourceTab);
+    }
+    activateSourceTab(SOURCES.TONE);
+
     // Everything that has to clear the dock reads its measured size: the panel
     // sits beside or above it, and the renderer centres the lattice on what it
     // leaves. Hard-coding it put the dock on top of the panel's last row, since
@@ -185,18 +226,17 @@ export function bindUI(app) {
     // cannot work there. Detect rather than sniff the platform.
     if (!navigator.mediaDevices?.getDisplayMedia) {
         for (const source of ['system', 'tab']) {
-            const button = document.querySelector(`[data-source="${source}"]`);
-            if (button) {
+            for (const button of document.querySelectorAll(`[data-source="${source}"], [data-connect-source="${source}"]`)) {
                 button.disabled = true;
                 button.title = 'This browser cannot capture screen or tab audio';
             }
         }
     }
 
-    // Audio source buttons. Each is its own click, because every capture path
-    // needs a user gesture and most need a permission prompt.
-    for (const button of document.querySelectorAll('[data-source]')) {
-        button.addEventListener('click', () => app.selectSource(button.dataset.source));
+    // Each source action remains its own click because every capture path needs
+    // a user gesture and most need a permission prompt.
+    for (const button of document.querySelectorAll('[data-connect-source]')) {
+        button.addEventListener('click', () => app.selectSource(button.dataset.connectSource));
     }
 
     els.loadTrack.addEventListener('click', () => {
@@ -221,6 +261,9 @@ export function bindUI(app) {
 
     return {
         els,
+        setActiveSource(kind) {
+            activateSourceTab(kind);
+        },
         setSizeSelection(n) {
             els.size.value = String(n);
         },
