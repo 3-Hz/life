@@ -93,8 +93,6 @@ html, body {
     align-items: center;
     justify-content: center;
     gap: 0.5em;
-    color: var(--accent);
-    border-color: var(--accent);
 }
 
 #panelTab .chev {
@@ -106,6 +104,8 @@ html, body {
     transform-origin: center;
     transition: transform 0.25s var(--ease);
 }
+#panelTab[aria-expanded="true"],
+#playerToggle[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
 #hudToggle[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 
 /*-------PANEL-------*/
@@ -207,10 +207,20 @@ html, body {
     stroke-width: 2;
 }
 
+.player-search-area {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8em;
+    padding: 0.2em 0.1em;
+}
+
 .player-search-area[hidden] { display: none; }
 
 #audiusPlayer .track { margin-bottom: 0; }
 #audiusPlayer .track button { width: auto; }
+#audiusPlayer .player-search-area .track { gap: 0.6em; }
+#audiusPlayer .player-search-area .track button { padding-inline: 1em; }
+#audiusPlayer .player-search-area .hint { margin: 0; padding-inline: 0.2em; }
 
 .advanced-sources {
     margin-top: 0.8em;
@@ -313,8 +323,7 @@ html, body {
         transform: translateY(calc(100% + var(--dock)));
     }
 
-    body.panel-closed #panelTab .chev { transform: rotate(0deg); }
-    #panelTab .chev { transform: rotate(180deg); }
+    #panelTab .chev { display: none; }
 
     #audiusPlayer {
         position: fixed;
@@ -426,7 +435,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
     display: flex;
     gap: 0.6em;
     width: 100%;
-    padding: 0.45em 0.5em;
+    padding: 0.65em 0.6em;
     border: 0;
     border-bottom: 1px solid var(--line);
     border-radius: 0;
@@ -492,13 +501,28 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 .status {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5em;
     margin: 0.6em 0;
     padding: 0.4em 0.6em;
     border-left: 2px solid var(--accent);
     color: var(--text);
 }
 
+.status::before {
+    content: '•';
+    flex: none;
+    color: var(--dim);
+}
+
+.status.active::before {
+    color: var(--accent);
+    text-shadow: 0 0 0.6em var(--accent);
+}
+
 .status.error { border-left-color: var(--error); color: var(--error); }
+.status.error::before { color: var(--error); }
 
 .hint {
     margin: 0.6em 0 0;

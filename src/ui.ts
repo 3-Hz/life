@@ -259,6 +259,9 @@ export function bindUI(app: UiApp): UiBinding {
         const showing = els.hud.hidden;
         els.hud.hidden = !showing;
         els.hudToggle.setAttribute('aria-pressed', String(showing));
+        const label = showing ? 'Hide statistics' : 'Show statistics';
+        els.hudToggle.setAttribute('aria-label', label);
+        els.hudToggle.title = label;
     });
 
     const desktopLayout = window.matchMedia('(min-width: 900px) and (orientation: landscape)');
@@ -288,11 +291,16 @@ export function bindUI(app: UiApp): UiBinding {
             playerOpen = false;
             document.body.classList.add('player-closed');
             els.playerToggle.setAttribute('aria-expanded', 'false');
+            els.playerToggle.setAttribute('aria-label', 'Open music player');
+            els.playerToggle.title = 'Open music player';
             els.audiusPlayer.setAttribute('aria-hidden', 'true');
             els.audiusPlayer.toggleAttribute('inert', true);
         }
         document.body.classList.toggle('panel-closed', !open);
         els.panelTab.setAttribute('aria-expanded', String(open));
+        const label = open ? 'Hide controls' : 'Show controls';
+        els.panelTab.setAttribute('aria-label', label);
+        els.panelTab.title = label;
         els.panel.toggleAttribute('inert', !open);
         syncChromeMetrics();
     }
@@ -302,6 +310,8 @@ export function bindUI(app: UiApp): UiBinding {
             playerOpen = false;
             document.body.classList.remove('player-closed');
             els.playerToggle.setAttribute('aria-expanded', 'false');
+            els.playerToggle.setAttribute('aria-label', 'Open music player');
+            els.playerToggle.title = 'Open music player';
             els.audiusPlayer.setAttribute('aria-hidden', 'false');
             els.audiusPlayer.toggleAttribute('inert', false);
             return;
@@ -310,11 +320,16 @@ export function bindUI(app: UiApp): UiBinding {
             panelOpen = false;
             document.body.classList.add('panel-closed');
             els.panelTab.setAttribute('aria-expanded', 'false');
+            els.panelTab.setAttribute('aria-label', 'Show controls');
+            els.panelTab.title = 'Show controls';
             els.panel.toggleAttribute('inert', true);
         }
         playerOpen = open;
         document.body.classList.toggle('player-closed', !open);
         els.playerToggle.setAttribute('aria-expanded', String(open));
+        const label = open ? 'Close music player' : 'Open music player';
+        els.playerToggle.setAttribute('aria-label', label);
+        els.playerToggle.title = label;
         els.audiusPlayer.setAttribute('aria-hidden', String(!open));
         els.audiusPlayer.toggleAttribute('inert', !open);
         syncChromeMetrics();
@@ -361,9 +376,8 @@ export function bindUI(app: UiApp): UiBinding {
     const firstAdvancedSource = sourceTabs.find((tab) => !tab.disabled)?.dataset.source as AudioSource | undefined;
     if (firstAdvancedSource) activateSourceTab(firstAdvancedSource);
 
-    // Everything that affects framing reads its measured size: the dock is
-    // permanent chrome, and an open controls panel takes a real slice out of
-    // the visualization rather than merely covering it.
+    // The dock is permanent chrome everywhere. The desktop panel also takes a
+    // real slice out of the visualization; mobile sheets overlay it instead.
     const syncChromeMetrics = () => {
         const box = els.dock.getBoundingClientRect();
         const root = document.documentElement.style;
@@ -372,9 +386,7 @@ export function bindUI(app: UiApp): UiBinding {
         const right = desktopLayout.matches
             ? box.width + (panelOpen ? els.panel.offsetWidth : 0)
             : 0;
-        const bottom = desktopLayout.matches
-            ? 0
-            : box.height + (panelOpen ? els.panel.offsetHeight : 0);
+        const bottom = desktopLayout.matches ? 0 : box.height;
         root.setProperty('--visual-right', `${right}px`);
         root.setProperty('--visual-bottom', `${bottom}px`);
         app.renderer.setChromeInsets(desktopLayout.matches ? { right } : { bottom });
@@ -385,6 +397,8 @@ export function bindUI(app: UiApp): UiBinding {
             playerOpen = false;
             document.body.classList.remove('player-closed');
             els.playerToggle.setAttribute('aria-expanded', 'false');
+            els.playerToggle.setAttribute('aria-label', 'Open music player');
+            els.playerToggle.title = 'Open music player';
             els.audiusPlayer.setAttribute('aria-hidden', 'false');
             els.audiusPlayer.toggleAttribute('inert', false);
             setPanelOpen(true);
@@ -591,6 +605,8 @@ export function bindUI(app: UiApp): UiBinding {
         setAudioStatus(text: string, isError = false): void {
             els.audioStatus.textContent = text;
             els.audioStatus.classList.toggle('error', isError);
+            const lower = text.toLowerCase();
+            els.audioStatus.classList.toggle('active', !isError && (lower.startsWith('listening:') || lower.startsWith('playing:')));
             bindTransport(app.audio.element);
         },
         setPlayerNote(text: string): void {
