@@ -26,19 +26,31 @@ The source is TypeScript and the compiler writes browser-ready modules to
 
 The awkward truth: **an embedded player's audio cannot be read by the page.** A
 SoundCloud or Spotify embed is a cross-origin iframe, and nothing in the browser
-turns its audio into samples. Reaching the song that is playing means screen
-capture, so most sources below go through the share picker.
+turns its audio into samples. Screen capture is the only way to reach it, and
+screen capture does not exist on any mobile browser — Android defines
+`getDisplayMedia` and always rejects it, iOS omits it.
+
+So the app does not try to capture someone else's player. It owns one. Audio
+served with `Access-Control-Allow-Origin` loads into our own `<audio>` element,
+and `createMediaElementSource` reads every sample of it: no picker, no
+permission, every browser. **Audius** clears that bar where SoundCloud never
+could — open API, no key, CORS on the stream and on the redirect in front of it.
 
 | Source | How it works | Where it works |
 | --- | --- | --- |
-| **System / other tab** | `getDisplayMedia` — share a tab or screen with audio | Tab audio in any Chromium; "share system audio" only on Windows and ChromeOS |
-| **This tab** | plays a SoundCloud track in the page, then captures this tab | Any Chromium, macOS included — the recommended path there |
+| **Music** | search Audius, stream it through our own element | Everywhere, no permission — the only song source that works on a phone |
+| **System / other tab** | `getDisplayMedia` — share a tab or screen with audio | Desktop Chromium, for reaching Spotify or YouTube; "share system audio" only on Windows and ChromeOS |
 | **Microphone** | `getUserMedia` | Everywhere. Also the macOS route to true system audio, via a loopback device such as BlackHole |
 | **Audio file** | pick a local file | Everywhere, no picker, no permission — the most reproducible option |
 | **Test tone** | built-in oscillator | Everywhere, no permission at all |
 
-Every source needs a click: `AudioContext` starts suspended until a gesture, and
-capture needs a permission prompt on top of that.
+Every source still needs a click, because `AudioContext` starts suspended until
+a gesture. Only the middle two add a permission prompt on top of that.
+
+The search box also takes an `audius.co` link. Audius is not the only host that
+qualifies: anything serving audio with the CORS header works through the same
+path, and `archive.org` downloads carry `Access-Control-Allow-Origin: *` across
+some 290,000 live recordings.
 
 ## Controls
 
@@ -225,7 +237,7 @@ page had drawn anything, permanently, since the size drop is one-way.
 index.html        import map, canvas, controls
 src/automata.ts   lattice, rules, step() — pure, no DOM (the tested module)
 src/audio.ts      capture chain, analyser, feature extraction
-src/player.ts     SoundCloud widget embed
+src/audius.ts     Audius search and stream URLs
 src/mapping.ts    audio features -> simulation and visual parameters
 src/render.ts     three.js scene, instanced voxels
 src/main.ts       wiring and the frame loop

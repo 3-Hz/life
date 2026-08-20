@@ -128,7 +128,8 @@ html, body {
 /*-------AUDIO MODES-------*/
 .source-tabs {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     gap: 0.35em;
     margin: 0.2em 0 0.7em;
 }
@@ -230,7 +231,10 @@ html, body {
 }
 
 @media (max-width: 520px) {
-    .source-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .source-tabs {
+        grid-auto-flow: row;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 /*-------CONTROLS-------*/
@@ -254,7 +258,7 @@ label {
 label.check { justify-content: flex-start; }
 label.file input { max-width: 12em; }
 
-select, input[type="text"], input[type="url"] {
+select, input[type="text"], input[type="url"], input[type="search"] {
     flex: 1;
     min-width: 0;
     padding: 0.35em 0.5em;
@@ -292,12 +296,64 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .track { display: flex; gap: 0.4em; margin-bottom: 0.6em; }
 
-#scPlayer {
+.track input { flex: 1; min-width: 0; }
+
+.track-results {
+    max-height: 15em;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.track-results:empty { display: none; }
+
+/* Full-width, left-aligned rows: this is a list that happens to be clickable,
+   not a stack of buttons. */
+.track-result {
+    display: flex;
+    gap: 0.6em;
     width: 100%;
-    height: 120px;
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    background: #0d0f18;
+    padding: 0.45em 0.5em;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: none;
+    color: var(--dim);
+    text-align: left;
+}
+
+.track-result:hover:not(:disabled) { color: var(--accent); border-color: var(--line); }
+
+.track-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.track-time { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
+
+.now-playing {
+    display: flex;
+    gap: 0.6em;
+    align-items: center;
+    margin-bottom: 0.6em;
+    color: var(--text);
+}
+
+.now-playing[hidden] { display: none; }
+
+/* The transport button is the exception to the panel's full-width buttons. */
+.source-panel .now-playing button {
+    width: auto;
+    flex: none;
+    min-width: 2.6em;
+}
+
+#nowPlayingTitle {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
 .status {
@@ -322,7 +378,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* Every control clears the 44px guidance, and form fields hit 16px so iOS
    Safari does not zoom the page when one takes focus. */
 @media (pointer: coarse) {
-    button, select, input[type="file"], input[type="text"], input[type="url"] {
+    button, select, input[type="file"], input[type="text"], input[type="url"], input[type="search"] {
         min-height: 44px;
         font-size: 16px;
     }

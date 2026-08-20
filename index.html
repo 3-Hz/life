@@ -69,10 +69,10 @@
             <section>
                 <h2>Audio</h2>
                 <div class="source-tabs" role="tablist" aria-label="Audio source">
+                    <button id="sourceTabStream" class="source-tab" data-source="stream" role="tab"
+                            aria-selected="false" aria-controls="sourcePanelStream" tabindex="-1">MUSIC</button>
                     <button id="sourceTabSystem" class="source-tab" data-source="system" role="tab"
                             aria-selected="false" aria-controls="sourcePanelSystem" tabindex="-1">SYSTEM</button>
-                    <button id="sourceTabTab" class="source-tab" data-source="tab" role="tab"
-                            aria-selected="false" aria-controls="sourcePanelTab" tabindex="-1">THIS TAB</button>
                     <button id="sourceTabMic" class="source-tab" data-source="mic" role="tab"
                             aria-selected="false" aria-controls="sourcePanelMic" tabindex="-1">MIC</button>
                     <button id="sourceTabFile" class="source-tab" data-source="file" role="tab"
@@ -81,23 +81,28 @@
                             aria-selected="false" aria-controls="sourcePanelTone" tabindex="-1">TONE</button>
                 </div>
 
-                <div id="sourcePanelSystem" class="source-panel" data-source-panel="system" role="tabpanel"
-                     aria-labelledby="sourceTabSystem" hidden>
-                    <p class="hint">Share a screen or browser tab with audio. The picker must include audio.</p>
-                    <button data-connect-source="system">CONNECT SYSTEM AUDIO</button>
+                <div id="sourcePanelStream" class="source-panel" data-source-panel="stream" role="tabpanel"
+                     aria-labelledby="sourceTabStream" hidden>
+                    <div class="track">
+                        <input id="trackQuery" type="search" aria-label="Search Audius"
+                               placeholder="search Audius, or paste a link">
+                        <button id="trackSearch">FIND</button>
+                    </div>
+                    <div id="nowPlaying" class="now-playing" hidden>
+                        <button id="trackToggle" aria-label="Pause">❚❚</button>
+                        <span id="nowPlayingTitle"></span>
+                    </div>
+                    <ul id="trackResults" class="track-results"></ul>
+                    <p id="playerNote" class="hint"></p>
+                    <p class="hint">Audius streams into this page, so the lattice reads the audio directly — no
+                        permission prompt, and it works on a phone.</p>
                 </div>
 
-                <div id="sourcePanelTab" class="source-panel" data-source-panel="tab" role="tabpanel"
-                     aria-labelledby="sourceTabTab" hidden>
-                    <div class="track">
-                        <input id="trackUrl" type="url" placeholder="https://soundcloud.com/artist/track">
-                        <button id="loadTrack">LOAD</button>
-                    </div>
-                    <iframe id="scPlayer" title="SoundCloud player" allow="autoplay"
-                            frameborder="0" scrolling="no"></iframe>
-                    <p id="playerNote" class="hint"></p>
-                    <p class="hint">Play a track, then capture this tab and include tab audio.</p>
-                    <button data-connect-source="tab">CONNECT THIS TAB</button>
+                <div id="sourcePanelSystem" class="source-panel" data-source-panel="system" role="tabpanel"
+                     aria-labelledby="sourceTabSystem" hidden>
+                    <p class="hint">Share a screen or browser tab with audio — the way to reach Spotify or
+                        YouTube. The picker must include audio. Desktop only.</p>
+                    <button data-connect-source="system">CONNECT SYSTEM AUDIO</button>
                 </div>
 
                 <div id="sourcePanelMic" class="source-panel" data-source-panel="mic" role="tabpanel"

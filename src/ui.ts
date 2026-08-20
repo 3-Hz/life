@@ -3,6 +3,8 @@
 
 import { SOURCES } from './audio.js';
 import type { AudioSource } from './audio.js';
+import { formatDuration } from './audius.js';
+import type { AudiusTrack } from './audius.js';
 import { RULE_PRESETS } from './automata.js';
 
 interface UiApp {
@@ -12,7 +14,11 @@ interface UiApp {
     sensitivity: number;
     paused: boolean;
     renderer: { setChromeInsets(insets: { top?: number; right?: number; bottom?: number; left?: number }): void };
-    player: { load(trackUrl: string): void };
+    audius: { search(query: string): Promise<AudiusTrack[]> };
+    // The element itself, because owning it is the whole point: transport
+    // controls are a property set away, where a widget needed a message.
+    audio: { element: HTMLAudioElement | null };
+    playTrack(track: AudiusTrack, queue?: AudiusTrack[]): Promise<void>;
     seed(): void;
     clear(): void;
     stepOnce(): void;
@@ -21,7 +27,7 @@ interface UiApp {
     setSize(size: number): void;
     setWrap(wrap: boolean): void;
     setQualityLevel(level: number): void;
-    selectSource(kind: AudioSource, payload?: File): Promise<void>;
+    selectSource(kind: AudioSource, payload?: File | AudiusTrack): Promise<void>;
 }
 
 interface UiElements {
@@ -38,8 +44,12 @@ interface UiElements {
     clear: HTMLButtonElement;
     pause: HTMLButtonElement;
     step: HTMLButtonElement;
-    trackUrl: HTMLInputElement;
-    loadTrack: HTMLButtonElement;
+    trackQuery: HTMLInputElement;
+    trackSearch: HTMLButtonElement;
+    trackResults: HTMLElement;
+    nowPlaying: HTMLElement;
+    nowPlayingTitle: HTMLElement;
+    trackToggle: HTMLButtonElement;
     fileInput: HTMLInputElement;
     audioStatus: HTMLElement;
     playerNote: HTMLElement;
@@ -90,6 +100,8 @@ export interface UiBinding {
     setSizeSelection(size: number): void;
     setAudioStatus(text: string, isError?: boolean): void;
     setPlayerNote(text: string): void;
+    setTrackResults(tracks: AudiusTrack[]): void;
+    setNowPlaying(track: AudiusTrack): void;
     updateHud(stats: HudStats): void;
 }
 
@@ -132,8 +144,12 @@ export function bindUI(app: UiApp): UiBinding {
         clear: $<HTMLButtonElement>('clear'),
         pause: $<HTMLButtonElement>('pause'),
         step: $<HTMLButtonElement>('step'),
-        trackUrl: $<HTMLInputElement>('trackUrl'),
-        loadTrack: $<HTMLButtonElement>('loadTrack'),
+        trackQuery: $<HTMLInputElement>('trackQuery'),
+        trackSearch: $<HTMLButtonElement>('trackSearch'),
+        trackResults: $<HTMLElement>('trackResults'),
+        nowPlaying: $<HTMLElement>('nowPlaying'),
+        nowPlayingTitle: $<HTMLElement>('nowPlayingTitle'),
+        trackToggle: $<HTMLButtonElement>('trackToggle'),
         fileInput: $<HTMLInputElement>('fileInput'),
         audioStatus: $<HTMLElement>('audioStatus'),
         playerNote: $<HTMLElement>('playerNote'),
@@ -158,6 +174,17 @@ export function bindUI(app: UiApp): UiBinding {
         quickPause: $<HTMLButtonElement>('quickPause'),
         hudToggle: $<HTMLButtonElement>('hudToggle'),
     } satisfies UiElements;
+
+    // Screen capture does not exist on mobile browsers, so that source cannot
+    // work there. Detect rather than sniff the platform. Removing it beats
+    // disabling it now that MUSIC covers the same want on every device -- and
+    // it has to happen before the tab list is read, or the roving-focus arrays
+    // would keep pointing at a detached button.
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+        for (const element of Array.from(document.querySelectorAll('[data-source="system"], [data-source-panel="system"]'))) {
+            element.remove();
+        }
+    }
 
     const sourceTabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"][data-source]'));
     const sourcePanels = Array.from(document.querySelectorAll<HTMLElement>('[role="tabpanel"][data-source-panel]'));
@@ -274,7 +301,7 @@ export function bindUI(app: UiApp): UiBinding {
         tab.addEventListener('click', () => activateSourceTab(tab.dataset.source as AudioSource));
         tab.addEventListener('keydown', moveSourceTab);
     }
-    activateSourceTab(SOURCES.TONE);
+    activateSourceTab(SOURCES.STREAM);
 
     // Everything that has to clear the dock reads its measured size: the panel
     // sits beside or above it, and the renderer centres the lattice on what it
@@ -324,26 +351,82 @@ export function bindUI(app: UiApp): UiBinding {
     els.view.addEventListener('pointerup', endTap);
     els.view.addEventListener('pointercancel', () => { tap = null; });
 
-    // Screen capture does not exist on mobile browsers, so these two sources
-    // cannot work there. Detect rather than sniff the platform.
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-        for (const source of ['system', 'tab']) {
-            for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>(`[data-source="${source}"], [data-connect-source="${source}"]`))) {
-                button.disabled = true;
-                button.title = 'This browser cannot capture screen or tab audio';
-            }
-        }
-    }
-
     // Each source action remains its own click because every capture path needs
     // a user gesture and most need a permission prompt.
     for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-connect-source]'))) {
         button.addEventListener('click', () => app.selectSource(button.dataset.connectSource as AudioSource));
     }
 
-    els.loadTrack.addEventListener('click', () => {
-        const url = els.trackUrl.value.trim();
-        if (url) app.player.load(url);
+    //-------MUSIC-------
+    // The list the buttons were built from. Clicking one plays it *and* hands
+    // over the rest, so the track that follows is the one below it on screen.
+    let results: AudiusTrack[] = [];
+
+    const renderResults = (tracks: AudiusTrack[]): void => {
+        results = tracks;
+        els.trackResults.textContent = '';
+        if (!tracks.length) {
+            els.playerNote.textContent = 'nothing found';
+            return;
+        }
+        els.playerNote.textContent = '';
+        for (const track of tracks) {
+            const item = document.createElement('li');
+            const button = document.createElement('button');
+            button.className = 'track-result';
+            const name = document.createElement('span');
+            name.className = 'track-name';
+            // textContent rather than innerHTML: these strings are other
+            // people's track titles, and they arrive over the network.
+            name.textContent = `${track.artist} — ${track.title}`;
+            button.appendChild(name);
+            // The full title is worth having somewhere, since the row clips it.
+            button.title = `${track.artist} — ${track.title}`;
+            const time = document.createElement('span');
+            time.className = 'track-time';
+            time.textContent = formatDuration(track.duration);
+            button.appendChild(time);
+            button.addEventListener('click', () => app.playTrack(track, results));
+            item.appendChild(button);
+            els.trackResults.appendChild(item);
+        }
+    };
+
+    let searchToken = 0;
+    const runSearch = async (): Promise<void> => {
+        const token = ++searchToken;
+        els.playerNote.textContent = 'searching...';
+        try {
+            const found = await app.audius.search(els.trackQuery.value);
+            // A slow first search must not overwrite a fast second one.
+            if (token === searchToken) renderResults(found);
+        } catch (err) {
+            if (token !== searchToken) return;
+            els.playerNote.textContent = err instanceof Error ? err.message : String(err);
+        }
+    };
+
+    els.trackSearch.addEventListener('click', () => { void runSearch(); });
+    els.trackQuery.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void runSearch();
+    });
+
+    // Transport, which owning the element makes trivial. Reading paused off the
+    // element rather than tracking it here keeps the label honest when playback
+    // stops for reasons we did not initiate.
+    const syncTransport = (): void => {
+        const element = app.audio.element;
+        const playing = Boolean(element) && !element!.paused;
+        els.trackToggle.textContent = playing ? '❚❚' : '▶';
+        els.trackToggle.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+    };
+    els.trackToggle.addEventListener('click', () => {
+        const element = app.audio.element;
+        if (!element) return;
+        if (element.paused) void element.play(); else element.pause();
+        syncTransport();
     });
 
     els.fileInput.addEventListener('change', () => {
@@ -376,6 +459,23 @@ export function bindUI(app: UiApp): UiBinding {
         setPlayerNote(text: string): void {
             els.playerNote.textContent = text;
         },
+        setTrackResults(tracks: AudiusTrack[]): void {
+            renderResults(tracks);
+        },
+        setNowPlaying(track: AudiusTrack): void {
+            els.nowPlaying.hidden = false;
+            els.nowPlayingTitle.textContent = `${track.artist} — ${track.title}`;
+            // Follow the element rather than assuming: playback can stop for
+            // reasons we did not initiate, and a label that lies about it is
+            // worse than no label. The element is replaced per track, so these
+            // listeners go with it.
+            const element = app.audio.element;
+            if (element) {
+                element.addEventListener('play', syncTransport);
+                element.addEventListener('pause', syncTransport);
+            }
+            syncTransport();
+        },
         updateHud(stats: HudStats): void {
             els.hudGen.textContent = String(stats.generation);
             els.hudPop.textContent = String(stats.population);
@@ -394,10 +494,4 @@ export function bindUI(app: UiApp): UiBinding {
         },
     };
     return ui;
-}
-
-// macOS Chrome offers tab audio but no "share system audio" checkbox, so the
-// in-page player is the path that actually works there.
-export function isMac(): boolean {
-    return /Mac/i.test(navigator.platform || navigator.userAgent);
 }
