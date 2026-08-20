@@ -6,11 +6,12 @@
 // is the only route to either, so most sources below funnel through it.
 //
 // Every feature here is reported *relative to the last few seconds of this
-// signal*, not against an absolute ceiling. See AdaptiveRange in dynamics.js for
+// signal*, not against an absolute ceiling. See AdaptiveRange in dynamics.ts for
 // why: absolute measurements clip on any real master, and a clipped feature
 // stops saying anything at all.
 
 import { AdaptiveRange, Envelope, OnsetDetector, clamp, smoothstep } from './dynamics.js';
+import type { AudioFeatures } from './mapping.js';
 
 export const SOURCES = {
     SYSTEM: 'system',
@@ -18,9 +19,11 @@ export const SOURCES = {
     MIC: 'mic',
     FILE: 'file',
     TONE: 'tone',
-};
+} as const;
 
-export const SOURCE_LABELS = {
+export type AudioSource = (typeof SOURCES)[keyof typeof SOURCES];
+
+export const SOURCE_LABELS: Record<AudioSource, string> = {
     [SOURCES.SYSTEM]: 'System / other tab',
     [SOURCES.TAB]: 'This tab (SoundCloud)',
     [SOURCES.MIC]: 'Microphone',
@@ -56,6 +59,25 @@ const DT_MIN = 1 / 240;
 const DT_MAX = 0.25;
 
 export class AudioEngine {
+    ctx: AudioContext | null;
+    analyser: AnalyserNode | null;
+    source: AudioNode | null;
+    sourceKind: AudioSource | null;
+    stream: MediaStream | null;
+    element: HTMLAudioElement | null;
+    error: string | null;
+    freq: Float32Array<ArrayBuffer> | null;
+    time: Uint8Array<ArrayBuffer> | null;
+    bands: Float32Array<ArrayBuffer>;
+    private _bandDb: Float32Array<ArrayBuffer>;
+    private _prevBandDb: Float32Array<ArrayBuffer> | null;
+    private _bandBins: Array<[number, number]> | null;
+    private _bandLogHz: Float32Array<ArrayBuffer>;
+    private _ranges: Record<'level' | 'bass' | 'mid' | 'treble' | 'centroid' | 'flux', AdaptiveRange>;
+    private _bandRanges: AdaptiveRange[];
+    private _onset: OnsetDetector;
+    private _pulse: Envelope;
+
     constructor() {
         this.ctx = null;
         this.analyser = null;
@@ -92,13 +114,13 @@ export class AudioEngine {
         this._pulse = new Envelope({ attack: 0.008, release: 0.3 });
     }
 
-    get active() {
+    get active(): boolean {
         return this.source !== null;
     }
 
     // AudioContext starts suspended until a gesture, so every entry point here
     // is called from a click handler.
-    async ensureContext() {
+    async ensureContext(): Promise<AudioContext> {
         if (!this.ctx) {
             const Ctor = window.AudioContext || window.webkitAudioContext;
             if (!Ctor) throw new Error('Web Audio is not available in this browser');
@@ -120,7 +142,7 @@ export class AudioEngine {
         return this.ctx;
     }
 
-    stop() {
+    stop(): void {
         if (this.source) {
             try { this.source.disconnect(); } catch { /* already gone */ }
         }
@@ -141,7 +163,7 @@ export class AudioEngine {
     // A new source is a new signal. Carrying the old one's range across would
     // make the first seconds of the new one read as whatever the last one was
     // relative to -- a quiet track after a loud one would look like silence.
-    resetFeatures() {
+    resetFeatures(): void {
         for (const range of Object.values(this._ranges)) range.reset();
         for (const range of this._bandRanges) range.reset();
         this._onset.reset();
@@ -153,7 +175,7 @@ export class AudioEngine {
     // Screen/tab share with audio. preferCurrentTab narrows the picker to this
     // page, which is how the in-page SoundCloud widget gets captured -- Chrome
     // offers tab audio on every platform, unlike "share system audio".
-    async useDisplayMedia({ preferCurrentTab = false } = {}) {
+    async useDisplayMedia({ preferCurrentTab = false }: { preferCurrentTab?: boolean } = {}): Promise<AudioSource> {
         await this.ensureContext();
         if (!navigator.mediaDevices?.getDisplayMedia) {
             throw new Error('getDisplayMedia is unavailable — try Chrome, or use an audio file');
@@ -162,11 +184,12 @@ export class AudioEngine {
         // Video is requested only because audio-only display capture is widely
         // rejected, and the track is kept alive because Chrome ends the whole
         // share session when it stops. It is never rendered.
-        const stream = await navigator.mediaDevices.getDisplayMedia({
+        const options: DisplayMediaStreamOptions & { preferCurrentTab?: boolean } = {
             video: true,
             audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
             preferCurrentTab,
-        });
+        };
+        const stream = await navigator.mediaDevices.getDisplayMedia(options);
 
         if (stream.getAudioTracks().length === 0) {
             for (const track of stream.getTracks()) track.stop();
@@ -175,30 +198,30 @@ export class AudioEngine {
 
         this.stop();
         this.stream = stream;
-        this.source = this.ctx.createMediaStreamSource(stream);
-        this.source.connect(this.analyser);
+        this.source = this.ctx!.createMediaStreamSource(stream);
+        this.source.connect(this.analyser!);
         this.sourceKind = preferCurrentTab ? SOURCES.TAB : SOURCES.SYSTEM;
         // Captured audio is not routed to the destination: it is already
         // audible at its origin, and echoing it back would double it.
-        return this.sourceKind;
+        return preferCurrentTab ? SOURCES.TAB : SOURCES.SYSTEM;
     }
 
-    async useMicrophone() {
+    async useMicrophone(): Promise<AudioSource> {
         await this.ensureContext();
         const stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         });
         this.stop();
         this.stream = stream;
-        this.source = this.ctx.createMediaStreamSource(stream);
-        this.source.connect(this.analyser);
+        this.source = this.ctx!.createMediaStreamSource(stream);
+        this.source.connect(this.analyser!);
         this.sourceKind = SOURCES.MIC;
-        return this.sourceKind;
+        return SOURCES.MIC;
     }
 
     // The only full-fidelity path with no picker, which is what makes it the
     // source used for tuning and for the headless smoke check.
-    async useFile(file) {
+    async useFile(file: File): Promise<AudioSource> {
         await this.ensureContext();
         this.stop();
         const element = new Audio();
@@ -206,20 +229,20 @@ export class AudioEngine {
         element.loop = true;
         element.crossOrigin = 'anonymous';
         this.element = element;
-        this.source = this.ctx.createMediaElementSource(element);
-        this.source.connect(this.analyser);
-        this.source.connect(this.ctx.destination); // this one we do want to hear
+        this.source = this.ctx!.createMediaElementSource(element);
+        this.source.connect(this.analyser!);
+        this.source.connect(this.ctx!.destination); // this one we do want to hear
         await element.play();
         this.sourceKind = SOURCES.FILE;
-        return this.sourceKind;
+        return SOURCES.FILE;
     }
 
     // A wobbling tone plus noise bursts, so the app demonstrates itself with no
     // permissions granted at all.
-    async useTestTone() {
+    async useTestTone(): Promise<AudioSource> {
         await this.ensureContext();
         this.stop();
-        const ctx = this.ctx;
+        const ctx = this.ctx!;
         const out = ctx.createGain();
         out.gain.value = 1;
 
@@ -255,7 +278,7 @@ export class AudioEngine {
         // The analyser gets the full-strength signal; the speakers get a
         // polite fraction of it. Otherwise a comfortable listening level means
         // a limp reaction.
-        out.connect(this.analyser);
+        out.connect(this.analyser!);
         const monitor = ctx.createGain();
         monitor.gain.value = 0.12;
         out.connect(monitor).connect(ctx.destination);
@@ -263,15 +286,17 @@ export class AudioEngine {
 
         this.source = out;
         this.sourceKind = SOURCES.TONE;
-        return this.sourceKind;
+        return SOURCES.TONE;
     }
 
     //-------BANDS-------
     // Log-spaced band edges, in bins. Built once per context: they depend only
     // on the sample rate and the FFT size, neither of which changes.
-    _buildBands() {
-        const binHz = this.ctx.sampleRate / this.analyser.fftSize;
-        const bins = this.analyser.frequencyBinCount;
+    private _buildBands(): void {
+        const ctx = this.ctx!;
+        const analyser = this.analyser!;
+        const binHz = ctx.sampleRate / analyser.fftSize;
+        const bins = analyser.frequencyBinCount;
         const ratio = Math.log(BAND_HI_HZ / BAND_LO_HZ) / BAND_COUNT;
         this._bandBins = [];
         for (let b = 0; b < BAND_COUNT; b++) {
@@ -290,17 +315,19 @@ export class AudioEngine {
     //-------FEATURES-------
     // Called once per animation frame. Returns normalized 0-1 values, each one
     // measured against this signal's own recent range.
-    features(dt = 1 / 60) {
+    features(dt = 1 / 60): AudioFeatures {
         if (!this.active) return silentFeatures(this.bands);
         const step = clamp(dt, DT_MIN, DT_MAX);
 
-        this.analyser.getFloatFrequencyData(this.freq);
-        this.analyser.getByteTimeDomainData(this.time);
+        const analyser = this.analyser!;
+        const freq = this.freq!;
+        const time = this.time!;
+        analyser.getFloatFrequencyData(freq);
+        analyser.getByteTimeDomainData(time);
 
-        const freq = this.freq;
         const bandDb = this._bandDb;
         for (let b = 0; b < BAND_COUNT; b++) {
-            const [lo, hi] = this._bandBins[b];
+            const [lo, hi] = this._bandBins![b];
             let sum = 0;
             for (let i = lo; i <= hi; i++) sum += Math.max(freq[i], DB_FLOOR);
             bandDb[b] = sum / (hi - lo + 1);
@@ -318,7 +345,7 @@ export class AudioEngine {
         } else {
             this._prevBandDb = new Float32Array(BAND_COUNT);
         }
-        this._prevBandDb.set(bandDb);
+        this._prevBandDb!.set(bandDb);
 
         // Centroid over log frequency, weighted by how far each band stands
         // above the noise floor. Log spacing is what makes an octave shift move
@@ -334,11 +361,11 @@ export class AudioEngine {
             : 0.5;
 
         let sumSquares = 0;
-        for (let i = 0; i < this.time.length; i++) {
-            const v = (this.time[i] - 128) / 128;
+        for (let i = 0; i < time.length; i++) {
+            const v = (time[i] - 128) / 128;
             sumSquares += v * v;
         }
-        const rms = Math.sqrt(sumSquares / this.time.length);
+        const rms = Math.sqrt(sumSquares / time.length);
         const levelDb = Math.max(DB_FLOOR, 20 * Math.log10(rms || 1e-9));
 
         // The gate, and the only absolute judgement in here.
@@ -375,9 +402,10 @@ export class AudioEngine {
 
     // Mean dB across a frequency span, straight off the FFT. Used for the three
     // broad bands, which want their own edges rather than the log band grid's.
-    _binMeanDb(loHz, hiHz) {
-        const binHz = this.ctx.sampleRate / this.analyser.fftSize;
-        const freq = this.freq;
+    private _binMeanDb(loHz: number, hiHz: number): number {
+        const analyser = this.analyser!;
+        const freq = this.freq!;
+        const binHz = this.ctx!.sampleRate / analyser.fftSize;
         const lo = clamp(Math.floor(loHz / binHz), 0, freq.length - 1);
         const hi = clamp(Math.ceil(hiHz / binHz), lo, freq.length - 1);
         let sum = 0;
@@ -390,7 +418,7 @@ export class AudioEngine {
 // centroid rests at 0.5 rather than 0 because it is the one bipolar feature:
 // zero is "as dark as this gets", which would hold the rule's birth window
 // shifted down the whole time nothing is connected.
-function silentFeatures(bands) {
+function silentFeatures(bands: Float32Array): AudioFeatures {
     return {
         bass: 0, mid: 0, treble: 0, level: 0, centroid: 0.5, flux: 0,
         beat: false, beatStrength: 0, pulse: 0, bands,

@@ -14,10 +14,13 @@ Open `index.html` through a local web server (not `file://` — ES modules and
 audio capture both refuse it):
 
 ```sh
+bun install
+bun run build
 python3 -m http.server 8000   # then open http://localhost:8000
 ```
 
-No build step, no npm install. three.js is vendored in `vendor/`.
+The source is TypeScript and the compiler writes browser-ready modules to
+`dist/`. three.js is still vendored in `vendor/`.
 
 ## Audio sources
 
@@ -118,7 +121,7 @@ rules in this family do. **Sparse and robust barely coexist here** — nothing
 under ~23% live survives varied seeding without freezing into a static crystal.
 That is a property of the rule family, not a tuning choice.
 
-The presets live in `RULE_PRESETS` in `src/automata.js`; the dropdown and the
+The presets live in `RULE_PRESETS` in `src/automata.ts`; the dropdown and the
 test both read from it, so there is one list rather than two that drift.
 
 ## Reacting to audio
@@ -133,7 +136,7 @@ fast bass envelope by a slow one — when both clip the ratio is 1, so beats
 stopped being found exactly in the music that has the most of them.
 
 So every feature is normalized against its own recent range (`AdaptiveRange` in
-`src/dynamics.js`): a floor that drops fast and rises slowly, a ceiling that
+`src/dynamics.ts`): a floor that drops fast and rises slowly, a ceiling that
 rises fast and drops slowly, and the signal mapped onto 0–1 between them. A
 transient reaches the top of the range immediately, and the range reopens over
 the following seconds, so a quiet passage reads quiet again shortly after a loud
@@ -220,19 +223,20 @@ page had drawn anything, permanently, since the size drop is one-way.
 
 ```
 index.html        import map, canvas, controls
-src/automata.js   lattice, rules, step() — pure, no DOM (the tested module)
-src/audio.js      capture chain, analyser, feature extraction
-src/player.js     SoundCloud widget embed
-src/mapping.js    audio features -> simulation and visual parameters
-src/render.js     three.js scene, instanced voxels
-src/main.js       wiring and the frame loop
+src/automata.ts   lattice, rules, step() — pure, no DOM (the tested module)
+src/audio.ts      capture chain, analyser, feature extraction
+src/player.ts     SoundCloud widget embed
+src/mapping.ts    audio features -> simulation and visual parameters
+src/render.ts     three.js scene, instanced voxels
+src/main.ts       wiring and the frame loop
+dist/             generated browser modules (do not edit)
 vendor/           three.js r185.1 (module + core + OrbitControls)
 ```
 
-`src/automata.js` imports nothing, which is what makes the rules testable:
+`src/automata.ts` imports nothing, which is what makes the rules testable:
 
 ```sh
-node --test
+bun run test
 ```
 
 Neighbor counting is separable — three one-dimensional passes give every cell its
@@ -284,10 +288,10 @@ every band per vertex costs too much on the mobile path.
 ## Tuning
 
 Every constant coupling audio to the simulation lives in `TUNING` in
-`src/mapping.js`, behind the sensitivity slider. Set sensitivity to 0 and the
+`src/mapping.ts`, behind the sensitivity slider. Set sensitivity to 0 and the
 simulation is deterministic again: same seed, same rule, same lattice.
 
 The feature extraction has its own knobs — attack and release per feature, the
-silence gate, the onset threshold — in `src/audio.js` and `src/dynamics.js`.
-`dynamics.js` is pure and has no imports, so what it does is pinned down by
+silence gate, the onset threshold — in `src/audio.ts` and `src/dynamics.ts`.
+`dynamics.ts` is pure and has no imports, so what it does is pinned down by
 `test/dynamics.test.mjs` rather than only by ear.

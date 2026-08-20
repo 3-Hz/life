@@ -2,9 +2,12 @@ import { Lattice, parseRule } from './automata.js';
 import { mulberry32 } from './rng.js';
 import { VoxelRenderer } from './render.js';
 import { AudioEngine, SOURCES, SOURCE_LABELS } from './audio.js';
+import type { AudioSource } from './audio.js';
 import { SoundCloudPlayer } from './player.js';
 import { mapToSim, mapToVisual, shiftBirth, densityControl, TARGETS } from './mapping.js';
 import { bindUI, isMac } from './ui.js';
+import type { PerfHudStats, UiBinding } from './ui.js';
+import type { Rule } from './automata.js';
 
 const DEFAULT_RULE = '4733';
 const SEED_DENSITY = 0.18;
@@ -31,6 +34,16 @@ const QUALITY_LEVELS = [
     { pixelRatio: 0.75, tickCeiling: 15, sizeCap: 48 },
     { pixelRatio: 0.75, tickCeiling: 15, sizeCap: 32 },
 ];
+
+interface QualityLevel {
+    pixelRatio: number;
+    tickCeiling: number;
+    sizeCap: number | null;
+}
+
+interface TimingStats extends PerfHudStats {
+    draws: number;
+}
 const SLOW_FRAME_MS = 20;   // below ~50fps
 const FAST_FRAME_MS = 12;   // comfortably above 60fps
 const LEVEL_DWELL_MS = 1500; // hysteresis, so it cannot oscillate
@@ -42,13 +55,42 @@ const LEVEL_DWELL_MS = 1500; // hysteresis, so it cannot oscillate
 const WARMUP_MS = 4000;
 
 class App {
+    rule: Rule;
+    lattice: Lattice;
+    rng: () => number;
+    renderer: VoxelRenderer;
+    audio: AudioEngine;
+    player: SoundCloudPlayer;
+    sensitivity: number;
+    autoRevive: boolean;
+    breathe: boolean;
+    population: number;
+    paused: boolean;
+    tickRate: number;
+    beats: number;
+    autoQuality: boolean;
+    qualityLevel: number;
+    private _levelChangedAt: number;
+    chosenSize: number;
+    perf: boolean;
+    timing: TimingStats;
+    private _accumulator: number;
+    private _phase: number;
+    private _startedAt: number;
+    private _last: number;
+    private _fps: number;
+    private _frameMs: number;
+    private _hudDue: number;
+    private _dirty: boolean;
+    ui: UiBinding;
+
     constructor() {
         this.rule = parseRule(DEFAULT_RULE);
         this.lattice = new Lattice(DEFAULT_SIZE, { wrap: true });
         this.rng = mulberry32(0xC0FFEE);
-        this.renderer = new VoxelRenderer(document.getElementById('view'), DEFAULT_SIZE, { mobile: MOBILE });
+        this.renderer = new VoxelRenderer(document.getElementById('view') as HTMLCanvasElement, DEFAULT_SIZE, { mobile: MOBILE });
         this.audio = new AudioEngine();
-        this.player = new SoundCloudPlayer(document.getElementById('scPlayer'));
+        this.player = new SoundCloudPlayer(document.getElementById('scPlayer') as HTMLIFrameElement);
 
         this.sensitivity = 0.6;
         this.autoRevive = true;
@@ -83,34 +125,34 @@ class App {
     }
 
     //-------SIM CONTROL-------
-    seed() {
+    seed(): void {
         this.lattice.seedRandom(SEED_DENSITY, this.rng, { margin: Math.floor(this.lattice.n / 4) });
         this.population = this.lattice.population();
         this.markDirty();
     }
 
-    clear() {
+    clear(): void {
         this.lattice.clear();
         this.population = 0;
         this.markDirty();
     }
 
-    togglePause() {
+    togglePause(): void {
         this.paused = !this.paused;
         this.markDirty();
     }
 
-    stepOnce() {
+    stepOnce(): void {
         this.paused = true;
         this.population = this.lattice.step(this.rule);
         this.markDirty();
     }
 
-    markDirty() {
+    private markDirty(): void {
         this._dirty = true;
     }
 
-    setRule(text) {
+    setRule(text: string): boolean {
         try {
             this.rule = parseRule(text);
             return true;
@@ -119,7 +161,7 @@ class App {
         }
     }
 
-    setSize(n, { userChoice = true } = {}) {
+    setSize(n: number, { userChoice = true }: { userChoice?: boolean } = {}): void {
         if (userChoice) this.chosenSize = n;
         if (n === this.lattice.n) return;
         const wrap = this.lattice.wrap;
@@ -128,7 +170,7 @@ class App {
         this.seed();
     }
 
-    setWrap(wrap) {
+    setWrap(wrap: boolean): void {
         const cells = this.lattice.cells.slice();
         const age = this.lattice.age.slice();
         this.lattice = new Lattice(this.lattice.n, { wrap });
@@ -138,28 +180,33 @@ class App {
     }
 
     //-------AUDIO-------
-    async selectSource(kind, payload) {
+    async selectSource(kind: AudioSource, payload?: File): Promise<void> {
         this.ui.setActiveSource(kind);
         try {
             this.ui.setAudioStatus(`connecting ${SOURCE_LABELS[kind]}...`);
             if (kind === SOURCES.SYSTEM) await this.audio.useDisplayMedia({ preferCurrentTab: false });
             else if (kind === SOURCES.TAB) await this.audio.useDisplayMedia({ preferCurrentTab: true });
             else if (kind === SOURCES.MIC) await this.audio.useMicrophone();
-            else if (kind === SOURCES.FILE) await this.audio.useFile(payload);
+            else if (kind === SOURCES.FILE) {
+                if (!payload) throw new Error('choose an audio file first');
+                await this.audio.useFile(payload);
+            }
             else if (kind === SOURCES.TONE) await this.audio.useTestTone();
             this.ui.setAudioStatus(`listening: ${SOURCE_LABELS[kind]}`);
         } catch (err) {
             // Denied permissions and cancelled pickers both land here; neither
             // is worth more than a line of text.
-            this.ui.setAudioStatus(`${SOURCE_LABELS[kind]} failed — ${err.message}`, true);
+            const message = err instanceof Error ? err.message : String(err);
+            this.ui.setAudioStatus(`${SOURCE_LABELS[kind]} failed — ${message}`, true);
         }
     }
 
-    async initPlayer() {
+    async initPlayer(): Promise<void> {
         const ok = await this.player.init();
         if (!ok) {
             this.ui.setPlayerNote(`SoundCloud unavailable (${this.player.error}) — the other sources still work.`);
-            document.querySelector('[data-source="tab"]').disabled = true;
+            const tab = document.querySelector<HTMLButtonElement>('[data-source="tab"]');
+            if (tab) tab.disabled = true;
         } else if (isMac()) {
             this.ui.setPlayerNote('On macOS, Chrome shares tab audio but not system audio — play a track here and capture this tab.');
         }
@@ -168,7 +215,7 @@ class App {
     //-------QUALITY-------
     // Frame time decides, not frame rate: a 20ms frame is a dropped frame
     // whether or not the average still looks acceptable.
-    updateQuality(now) {
+    private updateQuality(now: number): void {
         if (!this.autoQuality) return;
         if (now - this._startedAt < WARMUP_MS) return;
         if (now - this._levelChangedAt < LEVEL_DWELL_MS) return;
@@ -180,7 +227,7 @@ class App {
         }
     }
 
-    setQualityLevel(level, now = performance.now()) {
+    setQualityLevel(level: number, now = performance.now()): void {
         const previous = this.qualityLevel;
         this.qualityLevel = level;
         this._levelChangedAt = now;
@@ -200,7 +247,7 @@ class App {
     }
 
     //-------LOOP-------
-    frame(now) {
+    frame(now: number): void {
         const frameStart = now;
         const dt = Math.min((now - this._last) / 1000, 0.25);
         this._last = now;

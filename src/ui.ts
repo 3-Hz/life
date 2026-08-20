@@ -2,13 +2,106 @@
 // the app object it is handed.
 
 import { SOURCES } from './audio.js';
+import type { AudioSource } from './audio.js';
 import { RULE_PRESETS } from './automata.js';
 
-const $ = (id) => document.getElementById(id);
+interface UiApp {
+    autoQuality: boolean;
+    autoRevive: boolean;
+    breathe: boolean;
+    sensitivity: number;
+    paused: boolean;
+    renderer: { setChromeInsets(insets: { top?: number; right?: number; bottom?: number; left?: number }): void };
+    player: { load(trackUrl: string): void };
+    seed(): void;
+    clear(): void;
+    stepOnce(): void;
+    togglePause(): void;
+    setRule(text: string): boolean;
+    setSize(size: number): void;
+    setWrap(wrap: boolean): void;
+    setQualityLevel(level: number): void;
+    selectSource(kind: AudioSource, payload?: File): Promise<void>;
+}
+
+interface UiElements {
+    rule: HTMLSelectElement;
+    ruleCustom: HTMLInputElement;
+    size: HTMLSelectElement;
+    wrap: HTMLInputElement;
+    revive: HTMLInputElement;
+    breathe: HTMLInputElement;
+    autoQuality: HTMLInputElement;
+    sensitivity: HTMLInputElement;
+    sensitivityLabel: HTMLElement;
+    seed: HTMLButtonElement;
+    clear: HTMLButtonElement;
+    pause: HTMLButtonElement;
+    step: HTMLButtonElement;
+    trackUrl: HTMLInputElement;
+    loadTrack: HTMLButtonElement;
+    fileInput: HTMLInputElement;
+    audioStatus: HTMLElement;
+    playerNote: HTMLElement;
+    hudGen: HTMLElement;
+    hudPop: HTMLElement;
+    hudDrawn: HTMLElement;
+    hudRate: HTMLElement;
+    hudFps: HTMLElement;
+    hudBeat: HTMLElement;
+    hudPerf: HTMLElement;
+    perfSim: HTMLElement;
+    perfSync: HTMLElement;
+    perfFrame: HTMLElement;
+    perfQuality: HTMLElement;
+    perfLevel: HTMLElement;
+    perfFlux: HTMLElement;
+    view: HTMLCanvasElement;
+    hud: HTMLElement;
+    dock: HTMLElement;
+    panel: HTMLElement;
+    panelTab: HTMLButtonElement;
+    quickPause: HTMLButtonElement;
+    hudToggle: HTMLButtonElement;
+}
+
+export interface PerfHudStats {
+    sim: number;
+    sync: number;
+    frame: number;
+}
+
+export interface HudStats {
+    generation: number;
+    population: number;
+    drawn: number;
+    tickRate: number;
+    fps: number;
+    beats: number;
+    perf: PerfHudStats | null;
+    quality: number;
+    level: number;
+    flux: number;
+}
+
+export interface UiBinding {
+    els: UiElements;
+    setActiveSource(kind: AudioSource): void;
+    setSizeSelection(size: number): void;
+    setAudioStatus(text: string, isError?: boolean): void;
+    setPlayerNote(text: string): void;
+    updateHud(stats: HudStats): void;
+}
+
+const $ = <T extends HTMLElement>(id: string): T => {
+    const element = document.getElementById(id);
+    if (!element) throw new Error(`Missing UI element: #${id}`);
+    return element as T;
+};
 
 // The dropdown is the dial: presets in order of how much of the lattice
 // survives each step, from breathing to boiling.
-function buildRuleOptions(select) {
+function buildRuleOptions(select: HTMLSelectElement): void {
     for (const preset of RULE_PRESETS) {
         const option = document.createElement('option');
         option.value = preset.rule;
@@ -24,50 +117,50 @@ function buildRuleOptions(select) {
     select.appendChild(custom);
 }
 
-export function bindUI(app) {
+export function bindUI(app: UiApp): UiBinding {
     const els = {
-        rule: $('rule'),
-        ruleCustom: $('ruleCustom'),
-        size: $('size'),
-        wrap: $('wrap'),
-        revive: $('revive'),
-        breathe: $('breathe'),
-        autoQuality: $('autoQuality'),
-        sensitivity: $('sensitivity'),
-        sensitivityLabel: $('sensitivityLabel'),
-        seed: $('seed'),
-        clear: $('clear'),
-        pause: $('pause'),
-        step: $('step'),
-        trackUrl: $('trackUrl'),
-        loadTrack: $('loadTrack'),
-        fileInput: $('fileInput'),
-        audioStatus: $('audioStatus'),
-        playerNote: $('playerNote'),
-        hudGen: $('hudGen'),
-        hudPop: $('hudPop'),
-        hudDrawn: $('hudDrawn'),
-        hudRate: $('hudRate'),
-        hudFps: $('hudFps'),
-        hudBeat: $('hudBeat'),
-        hudPerf: $('hudPerf'),
-        perfSim: $('perfSim'),
-        perfSync: $('perfSync'),
-        perfFrame: $('perfFrame'),
-        perfQuality: $('perfQuality'),
-        perfLevel: $('perfLevel'),
-        perfFlux: $('perfFlux'),
-        view: $('view'),
-        hud: $('hud'),
-        dock: $('dock'),
-        panel: $('panel'),
-        panelTab: $('panelTab'),
-        quickPause: $('quickPause'),
-        hudToggle: $('hudToggle'),
-    };
+        rule: $<HTMLSelectElement>('rule'),
+        ruleCustom: $<HTMLInputElement>('ruleCustom'),
+        size: $<HTMLSelectElement>('size'),
+        wrap: $<HTMLInputElement>('wrap'),
+        revive: $<HTMLInputElement>('revive'),
+        breathe: $<HTMLInputElement>('breathe'),
+        autoQuality: $<HTMLInputElement>('autoQuality'),
+        sensitivity: $<HTMLInputElement>('sensitivity'),
+        sensitivityLabel: $<HTMLElement>('sensitivityLabel'),
+        seed: $<HTMLButtonElement>('seed'),
+        clear: $<HTMLButtonElement>('clear'),
+        pause: $<HTMLButtonElement>('pause'),
+        step: $<HTMLButtonElement>('step'),
+        trackUrl: $<HTMLInputElement>('trackUrl'),
+        loadTrack: $<HTMLButtonElement>('loadTrack'),
+        fileInput: $<HTMLInputElement>('fileInput'),
+        audioStatus: $<HTMLElement>('audioStatus'),
+        playerNote: $<HTMLElement>('playerNote'),
+        hudGen: $<HTMLElement>('hudGen'),
+        hudPop: $<HTMLElement>('hudPop'),
+        hudDrawn: $<HTMLElement>('hudDrawn'),
+        hudRate: $<HTMLElement>('hudRate'),
+        hudFps: $<HTMLElement>('hudFps'),
+        hudBeat: $<HTMLElement>('hudBeat'),
+        hudPerf: $<HTMLElement>('hudPerf'),
+        perfSim: $<HTMLElement>('perfSim'),
+        perfSync: $<HTMLElement>('perfSync'),
+        perfFrame: $<HTMLElement>('perfFrame'),
+        perfQuality: $<HTMLElement>('perfQuality'),
+        perfLevel: $<HTMLElement>('perfLevel'),
+        perfFlux: $<HTMLElement>('perfFlux'),
+        view: $<HTMLCanvasElement>('view'),
+        hud: $<HTMLElement>('hud'),
+        dock: $<HTMLElement>('dock'),
+        panel: $<HTMLElement>('panel'),
+        panelTab: $<HTMLButtonElement>('panelTab'),
+        quickPause: $<HTMLButtonElement>('quickPause'),
+        hudToggle: $<HTMLButtonElement>('hudToggle'),
+    } satisfies UiElements;
 
-    const sourceTabs = [...document.querySelectorAll('[role="tab"][data-source]')];
-    const sourcePanels = [...document.querySelectorAll('[role="tabpanel"][data-source-panel]')];
+    const sourceTabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"][data-source]'));
+    const sourcePanels = Array.from(document.querySelectorAll<HTMLElement>('[role="tabpanel"][data-source-panel]'));
 
     buildRuleOptions(els.rule);
 
@@ -127,7 +220,7 @@ export function bindUI(app) {
     //-------PANEL-------
     // The tab is the only thing that opens and closes the panel. A tap on the
     // canvas re-seeds, so it deliberately does not double as a dismiss.
-    const setPanelOpen = (open) => {
+    const setPanelOpen = (open: boolean): void => {
         document.body.classList.toggle('panel-closed', !open);
         els.panelTab.setAttribute('aria-expanded', String(open));
     };
@@ -148,7 +241,7 @@ export function bindUI(app) {
     // Audio sources are modes, not a row of unrelated actions. Tabs only
     // reveal a mode; the action inside each panel still owns the user gesture
     // needed by permission prompts and AudioContext.
-    const activateSourceTab = (kind, { focus = false } = {}) => {
+    const activateSourceTab = (kind: AudioSource, { focus = false }: { focus?: boolean } = {}): void => {
         const tab = sourceTabs.find((candidate) => candidate.dataset.source === kind);
         if (!tab || tab.disabled) return;
 
@@ -163,9 +256,9 @@ export function bindUI(app) {
         if (focus) tab.focus();
     };
 
-    const moveSourceTab = (event) => {
+    const moveSourceTab = (event: KeyboardEvent): void => {
         const enabled = sourceTabs.filter((tab) => !tab.disabled);
-        const current = enabled.indexOf(event.currentTarget);
+        const current = enabled.indexOf(event.currentTarget as HTMLButtonElement);
         if (current < 0) return;
         let next = current;
         if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (current + 1) % enabled.length;
@@ -174,11 +267,11 @@ export function bindUI(app) {
         else if (event.key === 'End') next = enabled.length - 1;
         else return;
         event.preventDefault();
-        activateSourceTab(enabled[next].dataset.source, { focus: true });
+        activateSourceTab(enabled[next].dataset.source as AudioSource, { focus: true });
     };
 
     for (const tab of sourceTabs) {
-        tab.addEventListener('click', () => activateSourceTab(tab.dataset.source));
+        tab.addEventListener('click', () => activateSourceTab(tab.dataset.source as AudioSource));
         tab.addEventListener('keydown', moveSourceTab);
     }
     activateSourceTab(SOURCES.TONE);
@@ -209,7 +302,7 @@ export function bindUI(app) {
     // nothing.
     const TAP_SLOP_PX = 12;
     const TAP_MS = 300;
-    let tap = null;
+    let tap: { x: number; y: number; t: number; id: number } | null | undefined = null;
     els.view.addEventListener('pointerdown', (event) => {
         // A second finger means pinch-zoom, never a tap.
         tap = tap === null && event.isPrimary
@@ -220,7 +313,7 @@ export function bindUI(app) {
         if (!tap || event.pointerId !== tap.id) return;
         if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > TAP_SLOP_PX) tap = undefined;
     });
-    const endTap = (event) => {
+    const endTap = (event: PointerEvent): void => {
         const candidate = tap;
         tap = null;
         if (!candidate || event.pointerId !== candidate.id) return;
@@ -235,7 +328,7 @@ export function bindUI(app) {
     // cannot work there. Detect rather than sniff the platform.
     if (!navigator.mediaDevices?.getDisplayMedia) {
         for (const source of ['system', 'tab']) {
-            for (const button of document.querySelectorAll(`[data-source="${source}"], [data-connect-source="${source}"]`)) {
+            for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>(`[data-source="${source}"], [data-connect-source="${source}"]`))) {
                 button.disabled = true;
                 button.title = 'This browser cannot capture screen or tab audio';
             }
@@ -244,8 +337,8 @@ export function bindUI(app) {
 
     // Each source action remains its own click because every capture path needs
     // a user gesture and most need a permission prompt.
-    for (const button of document.querySelectorAll('[data-connect-source]')) {
-        button.addEventListener('click', () => app.selectSource(button.dataset.connectSource));
+    for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-connect-source]'))) {
+        button.addEventListener('click', () => app.selectSource(button.dataset.connectSource as AudioSource));
     }
 
     els.loadTrack.addEventListener('click', () => {
@@ -259,7 +352,7 @@ export function bindUI(app) {
     });
 
     document.addEventListener('keydown', (event) => {
-        if (event.target.matches('input, select, textarea')) return;
+        if (event.target instanceof Element && event.target.matches('input, select, textarea')) return;
         if (event.key === ' ') {
             event.preventDefault();
             togglePause();
@@ -268,42 +361,43 @@ export function bindUI(app) {
         else if (event.key === 'r' || event.key === 'R') app.seed();
     });
 
-    return {
+    const ui: UiBinding = {
         els,
-        setActiveSource(kind) {
+        setActiveSource(kind: AudioSource): void {
             activateSourceTab(kind);
         },
-        setSizeSelection(n) {
+        setSizeSelection(n: number): void {
             els.size.value = String(n);
         },
-        setAudioStatus(text, isError = false) {
+        setAudioStatus(text: string, isError = false): void {
             els.audioStatus.textContent = text;
             els.audioStatus.classList.toggle('error', isError);
         },
-        setPlayerNote(text) {
+        setPlayerNote(text: string): void {
             els.playerNote.textContent = text;
         },
-        updateHud(stats) {
-            els.hudGen.textContent = stats.generation;
-            els.hudPop.textContent = stats.population;
-            els.hudDrawn.textContent = stats.drawn;
+        updateHud(stats: HudStats): void {
+            els.hudGen.textContent = String(stats.generation);
+            els.hudPop.textContent = String(stats.population);
+            els.hudDrawn.textContent = String(stats.drawn);
             els.hudRate.textContent = stats.tickRate.toFixed(1);
             els.hudFps.textContent = stats.fps.toFixed(0);
-            els.hudBeat.textContent = stats.beats;
+            els.hudBeat.textContent = String(stats.beats);
             if (!stats.perf) return;
             els.hudPerf.hidden = false;
             els.perfSim.textContent = stats.perf.sim.toFixed(2);
             els.perfSync.textContent = stats.perf.sync.toFixed(2);
             els.perfFrame.textContent = stats.perf.frame.toFixed(1);
-            els.perfQuality.textContent = stats.quality;
+            els.perfQuality.textContent = String(stats.quality);
             els.perfLevel.textContent = stats.level.toFixed(2);
             els.perfFlux.textContent = stats.flux.toFixed(2);
         },
     };
+    return ui;
 }
 
 // macOS Chrome offers tab audio but no "share system audio" checkbox, so the
 // in-page player is the path that actually works there.
-export function isMac() {
+export function isMac(): boolean {
     return /Mac/i.test(navigator.platform || navigator.userAgent);
 }

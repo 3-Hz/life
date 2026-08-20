@@ -1,22 +1,22 @@
 // Signal dynamics: the pieces that turn an absolute measurement into one that
 // keeps moving.
 //
-// Pure like automata.js -- no DOM, no Web Audio, no imports -- because this is
+// Pure like automata.ts -- no DOM, no Web Audio, no imports -- because this is
 // where "reacts to the music" is actually decided, and that deserves to be
 // testable in node rather than only by ear.
 
-export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+export const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 // Fraction of the way to a target after dt seconds for a one-pole filter with
 // time constant tau. Written in seconds rather than as a per-frame coefficient
 // so the response does not change when the frame rate does -- a beat has to
 // decay over the same 300ms at 30fps as at 120.
-export function rate(dt, tau) {
+export function rate(dt: number, tau: number): number {
     if (!(tau > 0)) return 1;
     return 1 - Math.exp(-Math.max(dt, 0) / tau);
 }
 
-export function smoothstep(edge0, edge1, x) {
+export function smoothstep(edge0: number, edge1: number, x: number): number {
     if (edge1 === edge0) return x < edge0 ? 0 : 1;
     const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
     return t * t * (3 - 2 * t);
@@ -37,7 +37,20 @@ export function smoothstep(edge0, edge1, x) {
 // middle rather than on either end, which is what makes a quiet passage read
 // quiet again a few seconds after a loud one.
 export class AdaptiveRange {
-    constructor({ attack = 0.1, release = 6, minSpan = 1, start = 0 } = {}) {
+    attack: number;
+    release: number;
+    minSpan: number;
+    start: number;
+    lo!: number;
+    hi!: number;
+    value!: number;
+
+    constructor({ attack = 0.1, release = 6, minSpan = 1, start = 0 }: {
+        attack?: number;
+        release?: number;
+        minSpan?: number;
+        start?: number;
+    } = {}) {
         this.attack = attack;
         this.release = release;
         // Keeps a near-constant signal from being amplified into full-scale
@@ -47,14 +60,14 @@ export class AdaptiveRange {
         this.reset();
     }
 
-    reset(value = this.start) {
+    reset(value: number = this.start): this {
         this.lo = value;
         this.hi = value;
         this.value = 0.5;
         return this;
     }
 
-    push(v, dt) {
+    push(v: number, dt: number): number {
         const fast = rate(dt, this.attack);
         const slow = rate(dt, this.release);
         this.hi += (v - this.hi) * (v > this.hi ? fast : slow);
@@ -78,25 +91,33 @@ export class AdaptiveRange {
 // Asymmetric envelope follower: snaps up, eases down. What makes a beat read as
 // a hit that fades rather than a step change.
 export class Envelope {
-    constructor({ attack = 0.02, release = 0.3, value = 0 } = {}) {
+    attack: number;
+    release: number;
+    value: number;
+
+    constructor({ attack = 0.02, release = 0.3, value = 0 }: {
+        attack?: number;
+        release?: number;
+        value?: number;
+    } = {}) {
         this.attack = attack;
         this.release = release;
         this.value = value;
     }
 
-    reset(value = 0) {
+    reset(value = 0): this {
         this.value = value;
         return this;
     }
 
     // Jump straight to v if that is louder than where we already are, so a hit
     // during a decay restarts it instead of being swallowed by it.
-    trigger(v) {
+    trigger(v: number): number {
         if (v > this.value) this.value = v;
         return this.value;
     }
 
-    push(target, dt) {
+    push(target: number, dt: number): number {
         const tau = target > this.value ? this.attack : this.release;
         this.value += (target - this.value) * rate(dt, tau);
         return this.value;
@@ -110,8 +131,25 @@ export class Envelope {
 // loud material, the ratio went to 1, and the app stopped seeing beats in
 // exactly the music that has the most of them.
 export class OnsetDetector {
+    memory: number;
+    sensitivity: number;
+    minInterval: number;
+    floor: number;
+    warmup: number;
+    mean!: number;
+    dev!: number;
+    previous!: number;
+    since!: number;
+    age!: number;
+
     constructor({ memory = 0.7, sensitivity = 1.4, minInterval = 0.11, floor = 0.02,
-                  warmup = 0.25 } = {}) {
+                  warmup = 0.25 }: {
+        memory?: number;
+        sensitivity?: number;
+        minInterval?: number;
+        floor?: number;
+        warmup?: number;
+    } = {}) {
         this.memory = memory;
         this.sensitivity = sensitivity;
         this.minInterval = minInterval;
@@ -123,7 +161,7 @@ export class OnsetDetector {
         this.reset();
     }
 
-    reset() {
+    reset(): this {
         this.mean = 0;
         this.dev = 0;
         this.previous = 0;
@@ -135,7 +173,7 @@ export class OnsetDetector {
     // Returns 0 for no onset, otherwise how far above the threshold it landed,
     // on 0-1. Flux is expected non-negative and in any consistent unit: the
     // threshold is built from the signal's own statistics, so scale cancels.
-    push(flux, dt) {
+    push(flux: number, dt: number): number {
         this.since += dt;
         this.age += dt;
         const threshold = this.mean + this.sensitivity * this.dev + this.floor;
