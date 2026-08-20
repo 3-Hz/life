@@ -18,11 +18,13 @@
         <canvas id="view"></canvas>
 
         <div id="dock">
-            <button id="panelTab" aria-expanded="false" aria-controls="panel">
+            <button id="panelTab" aria-expanded="false" aria-controls="panel"
+                    aria-label="Show controls" title="Show controls">
                 <span class="chev" aria-hidden="true">▲</span>
                 <span class="tabLabel">CONTROLS</span>
             </button>
-            <button id="playerToggle" aria-expanded="false" aria-controls="audiusPlayer">MUSIC</button>
+            <button id="playerToggle" aria-expanded="false" aria-controls="audiusPlayer"
+                    aria-label="Open music player" title="Open music player">MUSIC</button>
         </div>
 
         <header id="hud" hidden>
@@ -61,14 +63,14 @@
                     <button id="pause">PAUSE</button>
                     <button id="step">STEP</button>
                     <button id="clear">CLEAR</button>
-                    <button id="hudToggle" aria-pressed="false" aria-controls="hud">STATS</button>
+                    <button id="hudToggle" aria-pressed="false" aria-controls="hud"
+                            aria-label="Show statistics">STATS</button>
                 </div>
                 <p class="hint">tap the lattice to re-seed · drag to rotate · pinch or scroll to zoom<br>space pauses · s steps · c clears · r re-seeds</p>
             </section>
 
             <section>
                 <h2>Audio</h2>
-                <p class="hint primary-audio-note">Audius is the primary source. Open MUSIC to search and play a track.</p>
                 <details id="advancedSources" class="advanced-sources">
                     <summary>ADVANCED SOURCES</summary>
                     <div class="source-tabs" role="tablist" aria-label="Advanced audio source">
@@ -110,7 +112,7 @@
                     </div>
                 </details>
 
-                <p id="audioStatus" class="status">no audio source</p>
+                <p id="audioStatus" class="status" role="status" aria-live="polite" aria-atomic="true">no audio source</p>
                 <label>Sensitivity <b id="sensitivityLabel">60</b>
                     <input id="sensitivity" type="range" min="0" max="100" value="60">
                 </label>
@@ -125,7 +127,7 @@
                     <button id="trackSearch">FIND</button>
                 </div>
                 <ul id="trackResults" class="track-results"></ul>
-                <p id="playerNote" class="hint"></p>
+                <p id="playerNote" class="hint" role="status" aria-live="polite" aria-atomic="true"></p>
             </div>
             <div id="nowPlaying" class="now-playing">
                 <div class="now-playing-title">

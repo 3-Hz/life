@@ -408,7 +408,7 @@ class App {
 const app = new App();
 window.addEventListener('resize', () => app.renderer.resize());
 app.initAudius();
-app.ui.setAudioStatus('no audio source — pick one above');
+app.ui.setAudioStatus('no audio source');
 // Phones start at 32³, and nothing told the dropdown, so it read 48³ while the
 // app ran 32³. The select follows the lattice, never the markup's default.
 app.ui.setSizeSelection(app.lattice.n);

@@ -88,8 +88,9 @@ population collapses, so the toy is never empty when no audio is driving it.
 
 One controls panel, collapsible everywhere, uses a right rail on a wide
 landscape PC and a bottom sheet on smaller layouts. Opening it reframes the
-visualization into the space that remains; tapping the lattice never toggles it,
-since taps re-seed. Pause/play and the stats toggle live inside this panel.
+visualization on desktop; on smaller layouts it overlays the visualization so
+the lattice does not jump. Tapping the lattice never toggles it, since taps
+re-seed. Pause/play and the stats toggle live inside this panel.
 The HUD is off by default and trims to GEN, ALIVE and FPS on a narrow screen,
 where seven stats do not fit.
 
@@ -105,11 +106,13 @@ off a portrait phone; centring on the canvas left the lattice 28px low behind a
 55px dock. The canvas itself stays full-bleed, so the lattice still shows through
 the translucent panel.
 
-The dock and an open controls panel count as chrome, so the lattice reframes into
-the space that remains. The offset is fixed rather than tracking the cube's
-projected outline, so it does not drift while you rotate. The floating Audius
-player is deliberately excluded from the camera inset, so opening it does not
-make the lattice jump while someone searches or scrubs.
+The dock and an open controls panel count as chrome on desktop, so the lattice
+reframes into the space that remains. On mobile, only the dock counts as chrome;
+the Controls and Audius sheets overlay the full visualization area. The offset
+is fixed rather than tracking the cube's projected outline, so it does not drift
+while you rotate. The floating Audius player is deliberately excluded from the
+camera inset, so opening it does not make the lattice jump while someone
+searches or scrubs.
 
 ## Rules
 
