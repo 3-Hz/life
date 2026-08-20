@@ -2,8 +2,14 @@
 //
 // Reaching the song that is actually playing is the awkward part of this app.
 // getUserMedia only ever reaches a microphone, and an embedded player's audio
-// lives in a cross-origin iframe that Web Audio cannot touch. getDisplayMedia
-// is the only route to either, so most sources below funnel through it.
+// lives in a cross-origin iframe that Web Audio cannot touch -- which leaves
+// screen capture, and that does not exist on any mobile browser.
+//
+// The way out is to stop trying to capture someone else's player and own the
+// element instead. Audio served with Access-Control-Allow-Origin loads into our
+// own <audio>, and createMediaElementSource reads it directly: no picker, no
+// permission, every browser. That is what useStream is for, and why Audius
+// rather than SoundCloud sits behind it.
 //
 // Every feature here is reported *relative to the last few seconds of this
 // signal*, not against an absolute ceiling. See AdaptiveRange in dynamics.ts for
@@ -14,8 +20,8 @@ import { AdaptiveRange, Envelope, OnsetDetector, clamp, smoothstep } from './dyn
 import type { AudioFeatures } from './mapping.js';
 
 export const SOURCES = {
+    STREAM: 'stream',
     SYSTEM: 'system',
-    TAB: 'tab',
     MIC: 'mic',
     FILE: 'file',
     TONE: 'tone',
@@ -24,8 +30,8 @@ export const SOURCES = {
 export type AudioSource = (typeof SOURCES)[keyof typeof SOURCES];
 
 export const SOURCE_LABELS: Record<AudioSource, string> = {
+    [SOURCES.STREAM]: 'Audius',
     [SOURCES.SYSTEM]: 'System / other tab',
-    [SOURCES.TAB]: 'This tab (SoundCloud)',
     [SOURCES.MIC]: 'Microphone',
     [SOURCES.FILE]: 'Audio file',
     [SOURCES.TONE]: 'Test tone',
@@ -172,10 +178,10 @@ export class AudioEngine {
         this.bands.fill(0);
     }
 
-    // Screen/tab share with audio. preferCurrentTab narrows the picker to this
-    // page, which is how the in-page SoundCloud widget gets captured -- Chrome
-    // offers tab audio on every platform, unlike "share system audio".
-    async useDisplayMedia({ preferCurrentTab = false }: { preferCurrentTab?: boolean } = {}): Promise<AudioSource> {
+    // Screen/tab share with audio: the route to a song playing somewhere this
+    // page cannot reach, such as a Spotify or YouTube tab. Desktop only -- see
+    // the disable in ui.ts.
+    async useDisplayMedia(): Promise<AudioSource> {
         await this.ensureContext();
         if (!navigator.mediaDevices?.getDisplayMedia) {
             throw new Error('getDisplayMedia is unavailable — try Chrome, or use an audio file');
@@ -184,12 +190,10 @@ export class AudioEngine {
         // Video is requested only because audio-only display capture is widely
         // rejected, and the track is kept alive because Chrome ends the whole
         // share session when it stops. It is never rendered.
-        const options: DisplayMediaStreamOptions & { preferCurrentTab?: boolean } = {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
             video: true,
             audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-            preferCurrentTab,
-        };
-        const stream = await navigator.mediaDevices.getDisplayMedia(options);
+        });
 
         if (stream.getAudioTracks().length === 0) {
             for (const track of stream.getTracks()) track.stop();
@@ -200,10 +204,10 @@ export class AudioEngine {
         this.stream = stream;
         this.source = this.ctx!.createMediaStreamSource(stream);
         this.source.connect(this.analyser!);
-        this.sourceKind = preferCurrentTab ? SOURCES.TAB : SOURCES.SYSTEM;
+        this.sourceKind = SOURCES.SYSTEM;
         // Captured audio is not routed to the destination: it is already
         // audible at its origin, and echoing it back would double it.
-        return preferCurrentTab ? SOURCES.TAB : SOURCES.SYSTEM;
+        return SOURCES.SYSTEM;
     }
 
     async useMicrophone(): Promise<AudioSource> {
@@ -219,15 +223,42 @@ export class AudioEngine {
         return SOURCES.MIC;
     }
 
+    // A track from a CORS-enabled host, played through an element this page
+    // owns. No picker and no permission on any platform -- the only song source
+    // that works on a phone.
+    //
+    // onEnded is how the panel advances a queue: the element is replaced on
+    // every track, so a listener bound here dies with it and cannot leak.
+    async useStream(url: string, onEnded?: () => void): Promise<AudioSource> {
+        await this.ensureContext();
+        this.stop();
+        const element = new Audio();
+        // Before src, not after. Set afterwards, the request has already gone
+        // out without CORS mode, and a MediaElementAudioSourceNode over an
+        // element it is not allowed to read answers with silence rather than an
+        // error -- audible music, dead analyser, nothing in the console.
+        element.crossOrigin = 'anonymous';
+        element.src = url;
+        element.loop = false;
+        if (onEnded) element.addEventListener('ended', onEnded);
+        this.element = element;
+        this.source = this.ctx!.createMediaElementSource(element);
+        this.source.connect(this.analyser!);
+        this.source.connect(this.ctx!.destination); // this one we do want to hear
+        await element.play();
+        this.sourceKind = SOURCES.STREAM;
+        return SOURCES.STREAM;
+    }
+
     // The only full-fidelity path with no picker, which is what makes it the
     // source used for tuning and for the headless smoke check.
     async useFile(file: File): Promise<AudioSource> {
         await this.ensureContext();
         this.stop();
         const element = new Audio();
+        element.crossOrigin = 'anonymous';
         element.src = URL.createObjectURL(file);
         element.loop = true;
-        element.crossOrigin = 'anonymous';
         this.element = element;
         this.source = this.ctx!.createMediaElementSource(element);
         this.source.connect(this.analyser!);

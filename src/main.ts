@@ -3,9 +3,10 @@ import { mulberry32 } from './rng.js';
 import { VoxelRenderer } from './render.js';
 import { AudioEngine, SOURCES, SOURCE_LABELS } from './audio.js';
 import type { AudioSource } from './audio.js';
-import { SoundCloudPlayer } from './player.js';
+import { AudiusClient } from './audius.js';
+import type { AudiusTrack } from './audius.js';
 import { mapToSim, mapToVisual, shiftBirth, densityControl, TARGETS } from './mapping.js';
-import { bindUI, isMac } from './ui.js';
+import { bindUI } from './ui.js';
 import type { PerfHudStats, UiBinding } from './ui.js';
 import type { Rule } from './automata.js';
 
@@ -60,7 +61,11 @@ class App {
     rng: () => number;
     renderer: VoxelRenderer;
     audio: AudioEngine;
-    player: SoundCloudPlayer;
+    audius: AudiusClient;
+    // The list the panel is showing, kept here so a finished track can hand
+    // over to the next one without the UI having to drive playback.
+    queue: AudiusTrack[];
+    queueIndex: number;
     sensitivity: number;
     autoRevive: boolean;
     breathe: boolean;
@@ -90,7 +95,9 @@ class App {
         this.rng = mulberry32(0xC0FFEE);
         this.renderer = new VoxelRenderer(document.getElementById('view') as HTMLCanvasElement, DEFAULT_SIZE, { mobile: MOBILE });
         this.audio = new AudioEngine();
-        this.player = new SoundCloudPlayer(document.getElementById('scPlayer') as HTMLIFrameElement);
+        this.audius = new AudiusClient();
+        this.queue = [];
+        this.queueIndex = -1;
 
         this.sensitivity = 0.6;
         this.autoRevive = true;
@@ -180,19 +187,24 @@ class App {
     }
 
     //-------AUDIO-------
-    async selectSource(kind: AudioSource, payload?: File): Promise<void> {
+    async selectSource(kind: AudioSource, payload?: File | AudiusTrack): Promise<void> {
         this.ui.setActiveSource(kind);
         try {
             this.ui.setAudioStatus(`connecting ${SOURCE_LABELS[kind]}...`);
-            if (kind === SOURCES.SYSTEM) await this.audio.useDisplayMedia({ preferCurrentTab: false });
-            else if (kind === SOURCES.TAB) await this.audio.useDisplayMedia({ preferCurrentTab: true });
+            let status = `listening: ${SOURCE_LABELS[kind]}`;
+            if (kind === SOURCES.SYSTEM) await this.audio.useDisplayMedia();
             else if (kind === SOURCES.MIC) await this.audio.useMicrophone();
             else if (kind === SOURCES.FILE) {
-                if (!payload) throw new Error('choose an audio file first');
+                if (!(payload instanceof File)) throw new Error('choose an audio file first');
                 await this.audio.useFile(payload);
             }
+            else if (kind === SOURCES.STREAM) {
+                if (!payload || payload instanceof File) throw new Error('pick a track first');
+                await this.audio.useStream(this.audius.streamUrl(payload.id), () => this.playNext());
+                status = `playing: ${payload.artist} — ${payload.title}`;
+            }
             else if (kind === SOURCES.TONE) await this.audio.useTestTone();
-            this.ui.setAudioStatus(`listening: ${SOURCE_LABELS[kind]}`);
+            this.ui.setAudioStatus(status);
         } catch (err) {
             // Denied permissions and cancelled pickers both land here; neither
             // is worth more than a line of text.
@@ -201,14 +213,39 @@ class App {
         }
     }
 
-    async initPlayer(): Promise<void> {
-        const ok = await this.player.init();
+    // Playing from a list rather than a single track, so that finishing one
+    // does not drop the lattice back into silence mid-session.
+    async playTrack(track: AudiusTrack, queue: AudiusTrack[] = []): Promise<void> {
+        this.queue = queue.length ? queue : [track];
+        this.queueIndex = this.queue.findIndex((candidate) => candidate.id === track.id);
+        await this.selectSource(SOURCES.STREAM, track);
+        // After, not before: the element does not exist until useStream builds
+        // it, and the transport reads its state to label itself.
+        this.ui.setNowPlaying(track);
+    }
+
+    playNext(): void {
+        const next = this.queueIndex < 0 ? undefined : this.queue[this.queueIndex + 1];
+        // The end of the list is a stop, not a wrap: looping a search result
+        // set forever is not what anyone asked for.
+        if (!next) {
+            this.ui.setAudioStatus('track finished — pick another');
+            return;
+        }
+        this.playTrack(next, this.queue);
+    }
+
+    async initAudius(): Promise<void> {
+        const ok = await this.audius.init();
         if (!ok) {
-            this.ui.setPlayerNote(`SoundCloud unavailable (${this.player.error}) — the other sources still work.`);
-            const tab = document.querySelector<HTMLButtonElement>('[data-source="tab"]');
-            if (tab) tab.disabled = true;
-        } else if (isMac()) {
-            this.ui.setPlayerNote('On macOS, Chrome shares tab audio but not system audio — play a track here and capture this tab.');
+            this.ui.setPlayerNote(`Audius unreachable (${this.audius.error}) — the other sources still work.`);
+            return;
+        }
+        try {
+            this.ui.setTrackResults(await this.audius.trending());
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.ui.setPlayerNote(`could not load trending — ${message}`);
         }
     }
 
@@ -370,7 +407,7 @@ class App {
 
 const app = new App();
 window.addEventListener('resize', () => app.renderer.resize());
-app.initPlayer();
+app.initAudius();
 app.ui.setAudioStatus('no audio source — pick one above');
 // Phones start at 32³, and nothing told the dropdown, so it read 48³ while the
 // app ran 32³. The select follows the lattice, never the markup's default.
