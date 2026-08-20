@@ -3,7 +3,7 @@ import { mulberry32 } from './rng.js';
 import { VoxelRenderer } from './render.js';
 import { AudioEngine, SOURCES, SOURCE_LABELS } from './audio.js';
 import { SoundCloudPlayer } from './player.js';
-import { mapToSim, mapToVisual, shiftBirth, TARGETS } from './mapping.js';
+import { mapToSim, mapToVisual, shiftBirth, densityControl, TARGETS } from './mapping.js';
 import { bindUI, isMac } from './ui.js';
 
 const DEFAULT_RULE = '4733';
@@ -52,6 +52,8 @@ class App {
 
         this.sensitivity = 0.6;
         this.autoRevive = true;
+        // The other half of "never let it die": never let it pack solid either.
+        this.breathe = true;
         this.population = 0;
         this.paused = false;
         this.tickRate = SILENT_TICK_RATE;
@@ -203,19 +205,30 @@ class App {
         this._last = now;
         this._fps += (1 / Math.max(dt, 0.001) - this._fps) * 0.1;
 
-        const features = this.audio.features(now);
-        const sim = mapToSim(features, this.sensitivity, TARGETS);
-        const visual = mapToVisual(features, this.sensitivity, TARGETS);
+        const features = this.audio.features(dt);
+        // How full the lattice is decides how hard the controller pushes back,
+        // so it is read once and handed to both mappings.
+        const density = densityControl(this.population / this.lattice.size, this.breathe);
+        const sim = mapToSim(features, this.sensitivity, TARGETS, density);
+        const visual = mapToVisual(features, this.sensitivity, TARGETS, density);
         const ceiling = QUALITY_LEVELS[this.qualityLevel].tickCeiling;
         this.tickRate = Math.min(this.audio.active ? sim.tickRate : SILENT_TICK_RATE, ceiling);
 
         if (features.beat) this.beats++;
         if (sim.burst && !this.paused) {
             const n = this.lattice.n;
-            this.lattice.injectSphere(
-                Math.floor(this.rng() * n), Math.floor(this.rng() * n), Math.floor(this.rng() * n),
-                sim.burst.radius, sim.burst.density, this.rng,
-            );
+            // Height comes from the spectrum, the rest is scattered. A little
+            // jitter on the height keeps a steady mix from stacking every burst
+            // into the same flat slab.
+            const x = Math.floor(this.rng() * n);
+            const z = Math.floor(this.rng() * n);
+            const y = Math.max(0, Math.min(n - 1, Math.round(
+                sim.burst.height * (n - 1) + (this.rng() - 0.5) * n * 0.15,
+            )));
+            this.lattice.injectSphere(x, y, z, sim.burst.radius, sim.burst.density, this.rng);
+            // The shell and the cells it woke share an origin, so the wave reads
+            // as coming from the hit rather than from nowhere.
+            this.renderer.spawnShock(x, y, z, features.beatStrength);
             this.population = this.lattice.population();
             this.markDirty();
         }
@@ -227,8 +240,9 @@ class App {
             const interval = 1 / this.tickRate;
             // Capped so a backgrounded tab does not return and run a hundred
             // generations in one frame.
+            const thinning = { birthChance: sim.birthChance, rng: this.rng };
             while (this._accumulator >= interval && ticks < 4) {
-                this.population = this.lattice.step(shiftBirth(this.rule, sim.birthShift));
+                this.population = this.lattice.step(shiftBirth(this.rule, sim.birthShift), thinning);
                 this._accumulator -= interval;
                 ticks++;
                 this._dirty = true;
@@ -268,6 +282,7 @@ class App {
         // animation is itself movement, so every frame counts; paused, with no
         // audio and the camera at rest, there is nothing new to put on screen.
         this.renderer.applyVisual(visual);
+        this.renderer.updateShocks(dt);
         this.renderer.setPhase(this._phase);
         const cameraMoved = this.renderer.updateControls();
         const audioLive = this.audio.active;
@@ -294,6 +309,10 @@ class App {
                 beats: this.beats,
                 perf: this.perf ? this.timing : null,
                 quality: this.qualityLevel,
+                // The two numbers that say whether the audio side is alive.
+                // Either one sitting at 1.00 is the failure this is watching for.
+                level: features.level,
+                flux: features.flux,
             });
         }
 

@@ -293,3 +293,59 @@ test('previous holds the prior generation, so births and deaths are separable', 
         assert.equal(born + steady, lattice.population());
     }
 });
+
+//-------BIRTH THINNING-------
+// The density controller's lever. It must be invisible when unused, and when
+// used it must only ever take away births.
+test('the default step is untouched by the thinning parameter', () => {
+    const rule = parseRule('4733');
+    const plain = randomLattice(12, true, 909);
+    const withArgs = randomLattice(12, true, 909);
+    for (let i = 0; i < 8; i++) {
+        plain.step(rule);
+        withArgs.step(rule, { birthChance: 1, rng: mulberry32(1) });
+    }
+    assert.deepEqual([...withArgs.cells], [...plain.cells]);
+    assert.deepEqual([...withArgs.age], [...plain.age]);
+});
+
+test('thinning removes births and leaves survivors alone', () => {
+    const rule = parseRule('4733');
+    const full = randomLattice(16, true, 4242);
+    const thinned = randomLattice(16, true, 4242);
+
+    const before = [...full.cells];
+    full.step(rule);
+    const thinnedAlive = thinned.step(rule, { birthChance: 0.3, rng: mulberry32(7) });
+
+    assert.ok(thinnedAlive < full.population(), 'thinning must actually cost cells');
+    for (let i = 0; i < full.size; i++) {
+        if (thinned.cells[i] && !before[i]) {
+            assert.ok(full.cells[i], 'thinning may only remove births, never add them');
+        }
+        if (before[i] && full.cells[i]) {
+            assert.equal(thinned.cells[i], 1, 'a survivor must survive either way');
+        }
+    }
+});
+
+test('a zero birth chance leaves nothing but survivors', () => {
+    const rule = parseRule('4733');
+    const lattice = randomLattice(12, true, 55);
+    const before = [...lattice.cells];
+    lattice.step(rule, { birthChance: 0, rng: mulberry32(3) });
+    for (let i = 0; i < lattice.size; i++) {
+        if (lattice.cells[i]) assert.equal(before[i], 1, 'nothing new may be born');
+    }
+});
+
+test('thinning is reproducible from the same seed', () => {
+    const rule = parseRule('4733');
+    const run = () => {
+        const lattice = randomLattice(12, true, 77);
+        const rng = mulberry32(0xBEEF);
+        for (let i = 0; i < 6; i++) lattice.step(rule, { birthChance: 0.5, rng });
+        return [...lattice.cells];
+    };
+    assert.deepEqual(run(), run());
+});

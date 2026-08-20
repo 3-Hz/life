@@ -10,6 +10,10 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 // Cell coordinates travel as unsigned bytes, which caps the lattice at 255^3 and
 // keeps the per-tick upload four times smaller than float offsets would.
 
+// Concurrent shockwaves. Three is enough that a fast passage overlaps rather
+// than cutting one shell off to start the next.
+const SHOCKS = 3;
+
 const VERTEX_SHADER = /* glsl */ `
     attribute vec4 aCell;  // xyz = lattice coordinate, w = age
     attribute vec2 aData;  // x = live neighbors 0-26, y = state (0 steady, 1 born, 2 dying)
@@ -17,10 +21,20 @@ const VERTEX_SHADER = /* glsl */ `
     uniform float uScale;
     uniform float uHalf;
     uniform float uPhase; // progress toward the next generation, 0-1
+    uniform float uSpan;  // n - 1, the lattice's coordinate range
+    uniform float uWrap;  // n when the lattice is toroidal, 0 when it is not
+
+    uniform sampler2D uSpectrum;   // one texel per analysis band, bass first
+    uniform vec4 uShock[${SHOCKS}]; // xyz = centre in lattice coords, w = radius
+    uniform float uShockGain[${SHOCKS}];
+    uniform float uShockWidth;
+    uniform float uShockLift;
 
     varying float vAge;
     varying float vCount;
     varying float vDying;
+    varying float vBand;
+    varying float vShock;
     varying vec3 vNormal;
     varying float vDepth;
 
@@ -28,6 +42,24 @@ const VERTEX_SHADER = /* glsl */ `
         vAge = aCell.w / 255.0;
         vCount = aData.x;
         vNormal = normalMatrix * normal;
+
+        // The spectrum stands up inside the lattice: bass lights the floor,
+        // treble the ceiling, so the shape of the mix is visible rather than
+        // just its loudness. A texture rather than a uniform array because
+        // GLSL ES 1.00 will not index one of those with a computed index, and a
+        // loop over every band per vertex is too much for the mobile path.
+        vBand = texture2D(uSpectrum, vec2(aCell.y / uSpan, 0.5)).r;
+
+        // Each onset sends a shell outward from where its burst landed.
+        float shock = 0.0;
+        for (int i = 0; i < ${SHOCKS}; i++) {
+            vec3 d = abs(aCell.xyz - uShock[i].xyz);
+            // On a toroidal lattice the short way round is often the back way.
+            if (uWrap > 0.0) d = min(d, uWrap - d);
+            float edge = (length(d) - uShock[i].w) / uShockWidth;
+            shock += exp(-edge * edge) * uShockGain[i];
+        }
+        vShock = shock;
 
         // Births grow in and deaths shrink away across the gap between
         // generations, so the lattice moves continuously instead of snapping
@@ -39,7 +71,8 @@ const VERTEX_SHADER = /* glsl */ `
         vDying = dying;
         float life = mix(1.0, eased, born) * mix(1.0, 1.0 - eased, dying);
 
-        vec3 world = position * uScale * life + (aCell.xyz - uHalf);
+        vec3 world = position * uScale * life * (1.0 + shock * uShockLift)
+                   + (aCell.xyz - uHalf);
         vec4 viewPos = modelViewMatrix * vec4(world, 1.0);
         vDepth = -viewPos.z;
         gl_Position = projectionMatrix * viewPos;
@@ -58,10 +91,15 @@ const FRAGMENT_SHADER = /* glsl */ `
     uniform float uFogNear;
     uniform float uFogFar;
     uniform float uAo;
+    uniform float uBandGain;
+    uniform float uShockGlow;
+    uniform float uExposure;
 
     varying float vAge;
     varying float vCount;
     varying float vDying;
+    varying float vBand;
+    varying float vShock;
     varying vec3 vNormal;
     varying float vDepth;
 
@@ -88,7 +126,17 @@ const FRAGMENT_SHADER = /* glsl */ `
 
         vec3 color = base * (0.22 + 0.78 * key) * occlusion;
         color += base * rim;
-        color += base * uEmissive * (1.0 - age); // young cells glow
+        // Everything that answers to the music, added on top: a transient glow
+        // on young cells, the band sitting at this height, and any shell
+        // passing through.
+        color += base * (uEmissive * (1.0 - age) + vBand * uBandGain + vShock * uShockGlow);
+
+        // Tone map rather than clip. Additive glow used to run straight past 1.0
+        // and flatten to white, so every loud moment looked identical to the
+        // one before it -- the visual saturation this whole path exists to
+        // avoid. Compressing instead keeps a harder hit reading as harder, and
+        // is what lets the glow be pushed far enough to be worth watching.
+        color = vec3(1.0) - exp(-color * uExposure);
 
         float fog = clamp((vDepth - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
         gl_FragColor = vec4(mix(color, uFogColor, fog), 1.0);
@@ -96,6 +144,8 @@ const FRAGMENT_SHADER = /* glsl */ `
 `;
 
 const BACKGROUND = 0x07070c;
+const BOUNDS_COLOR = 0x2a3350;
+const BOUNDS_HOT = 0x6ad3ff;
 
 export class VoxelRenderer {
     constructor(canvas, n, { mobile = false } = {}) {
@@ -128,6 +178,17 @@ export class VoxelRenderer {
         // (one finger, left drag) and zoom (pinch, wheel) stay.
         this.controls.enablePan = false;
 
+        this.buildSpectrum(32);
+        // Live shockwaves. A spent one keeps its slot with zero gain, which
+        // costs the shader the same as an occupied one and saves the branch.
+        this.shocks = Array.from({ length: SHOCKS }, () => ({ age: Infinity, strength: 0 }));
+        // Fast enough to reach the outside of the lattice while it still has
+        // most of its strength. A shell is only ever seen through the cells in
+        // front of it, so the half of its life spent deep in the middle is the
+        // half nobody can really watch.
+        this.shockSpeed = 34;   // lattice units per second
+        this.shockLife = 1;     // seconds until a shell is spent
+
         // Palette carried over from the material this shader replaces, so the
         // app still reads as itself.
         this.material = new THREE.ShaderMaterial({
@@ -137,12 +198,22 @@ export class VoxelRenderer {
                 uScale: { value: 0.9 },
                 uHalf: { value: (n - 1) / 2 },
                 uPhase: { value: 1 },
+                uSpan: { value: Math.max(1, n - 1) },
+                uWrap: { value: n },
+                uSpectrum: { value: this.spectrumTexture },
+                uShock: { value: Array.from({ length: SHOCKS }, () => new THREE.Vector4()) },
+                uShockGain: { value: new Array(SHOCKS).fill(0) },
+                uShockWidth: { value: 5 },
+                uShockLift: { value: 0.55 },
+                uShockGlow: { value: 2.4 },
                 uYoung: { value: new THREE.Color().setHSL(0.58, 0.75, 0.35) },
                 uOld: { value: new THREE.Color().setHSL(0.06, 0.75, 0.63) },
                 uTint: { value: new THREE.Color(1, 1, 1) },
                 uFogColor: { value: new THREE.Color(BACKGROUND) },
                 uKeyDir: { value: new THREE.Vector3(1, 1.4, 0.8).normalize() },
                 uEmissive: { value: 0.2 },
+                uBandGain: { value: 0 },
+                uExposure: { value: 1.35 },
                 uFogNear: { value: n * 1.6 },
                 uFogFar: { value: n * 4.5 },
                 uAo: { value: 0.55 },
@@ -151,6 +222,8 @@ export class VoxelRenderer {
 
         this.buildMesh(n);
 
+        this.boundsBase = new THREE.Color(BOUNDS_COLOR);
+        this.boundsHot = new THREE.Color(BOUNDS_HOT);
         this.bounds = null;
         this.rebuildBounds(n);
 
@@ -185,6 +258,22 @@ export class VoxelRenderer {
         this.mesh = new THREE.Mesh(geometry, this.material);
         this.mesh.frustumCulled = false; // instances move every tick
         this.scene.add(this.mesh);
+    }
+
+    // One texel per analysis band. The shader samples it by height, so linear
+    // filtering is what blends one band into the next up the lattice.
+    buildSpectrum(bands) {
+        if (this.spectrumTexture) this.spectrumTexture.dispose();
+        this.spectrumData = new Uint8Array(bands);
+        this.spectrumTexture = new THREE.DataTexture(this.spectrumData, bands, 1, THREE.RedFormat);
+        this.spectrumTexture.minFilter = THREE.LinearFilter;
+        this.spectrumTexture.magFilter = THREE.LinearFilter;
+        this.spectrumTexture.wrapS = THREE.ClampToEdgeWrapping;
+        this.spectrumTexture.wrapT = THREE.ClampToEdgeWrapping;
+        this.spectrumTexture.generateMipmaps = false;
+        this.spectrumTexture.unpackAlignment = 1;
+        this.spectrumTexture.needsUpdate = true;
+        if (this.material) this.material.uniforms.uSpectrum.value = this.spectrumTexture;
     }
 
     // The rectangle the viewer can actually see: the canvas minus permanent
@@ -246,7 +335,7 @@ export class VoxelRenderer {
         }
         this.bounds = new THREE.LineSegments(
             new THREE.EdgesGeometry(new THREE.BoxGeometry(n, n, n)),
-            new THREE.LineBasicMaterial({ color: 0x2a3350 }),
+            new THREE.LineBasicMaterial({ color: BOUNDS_COLOR }),
         );
         this.scene.add(this.bounds);
     }
@@ -258,6 +347,7 @@ export class VoxelRenderer {
 
         this.n = n;
         this.material.uniforms.uHalf.value = (n - 1) / 2;
+        this.material.uniforms.uSpan.value = Math.max(1, n - 1);
         this.material.uniforms.uFogNear.value = n * 1.6;
         this.material.uniforms.uFogFar.value = n * 4.5;
 
@@ -290,6 +380,10 @@ export class VoxelRenderer {
         const counts = lattice.counts;
         const cellData = this.cellData;
         const stateData = this.stateData;
+
+        // Read off the lattice rather than tracked separately, so the shockwave
+        // geometry can never disagree with the simulation about wrapping.
+        this.material.uniforms.uWrap.value = lattice.wrap ? n : 0;
 
         let k = 0;
         for (let z = 0; z < n; z++) {
@@ -329,6 +423,41 @@ export class VoxelRenderer {
         this.material.uniforms.uPhase.value = phase;
     }
 
+    //-------SHOCKWAVES-------
+    // Started wherever a beat's burst lands, so the shell and the cells it
+    // brought to life share an origin.
+    spawnShock(x, y, z, strength) {
+        // Take the most spent slot, so a new hit never cuts short a shell that
+        // is younger than the alternative.
+        let slot = this.shocks[0];
+        for (const shock of this.shocks) if (shock.age > slot.age) slot = shock;
+        slot.x = x;
+        slot.y = y;
+        slot.z = z;
+        slot.age = 0;
+        slot.strength = strength;
+    }
+
+    updateShocks(dt) {
+        const uShock = this.material.uniforms.uShock.value;
+        const uGain = this.material.uniforms.uShockGain.value;
+        for (let i = 0; i < SHOCKS; i++) {
+            const shock = this.shocks[i];
+            shock.age += dt;
+            const remaining = 1 - shock.age / this.shockLife;
+            if (!(remaining > 0)) {
+                uGain[i] = 0;
+                continue;
+            }
+            uShock[i].set(shock.x, shock.y, shock.z, shock.age * this.shockSpeed);
+            // Fades as it expands, so the shell thins out instead of stopping.
+            // Gently, though: a square-law fade left it dimmest exactly as it
+            // reached the surface, which is the one place there was a clear view
+            // of it. This holds about half its strength that far out.
+            uGain[i] = shock.strength * remaining ** 0.6;
+        }
+    }
+
     //-------PER-FRAME-------
     // Uniforms only. Voxel scale used to be baked into every instance matrix,
     // which meant the audio reaction forced a full rebuild; now it is one float.
@@ -336,12 +465,28 @@ export class VoxelRenderer {
         const uniforms = this.material.uniforms;
         uniforms.uScale.value = visual.voxelScale;
         uniforms.uEmissive.value = visual.emissive;
-        uniforms.uTint.value.setHSL((0.55 + visual.hueShift) % 1, 0.25, 0.72);
+        uniforms.uBandGain.value = visual.bandGain ?? 0;
+        // 0.55 is the resting hue; the +1 keeps the modulo positive now that
+        // the shift can go either way around it.
+        uniforms.uTint.value.setHSL((1.55 + visual.hueShift) % 1, visual.tintSat ?? 0.25, 0.72);
+        this.setSpectrum(visual.bands);
+        this.bounds.material.color.copy(this.boundsBase).lerp(this.boundsHot, visual.pulse ?? 0);
+
         const zoom = 1 + visual.dolly;
         if (this.camera.zoom !== zoom) {
             this.camera.zoom = zoom;
             this.camera.updateProjectionMatrix();
         }
+    }
+
+    setSpectrum(bands) {
+        if (!bands) return;
+        if (bands.length !== this.spectrumData.length) this.buildSpectrum(bands.length);
+        const data = this.spectrumData;
+        for (let i = 0; i < bands.length; i++) {
+            data[i] = Math.max(0, Math.min(255, Math.round(bands[i] * 255)));
+        }
+        this.spectrumTexture.needsUpdate = true;
     }
 
     resize() {

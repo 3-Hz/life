@@ -4,6 +4,13 @@
 // getUserMedia only ever reaches a microphone, and an embedded player's audio
 // lives in a cross-origin iframe that Web Audio cannot touch. getDisplayMedia
 // is the only route to either, so most sources below funnel through it.
+//
+// Every feature here is reported *relative to the last few seconds of this
+// signal*, not against an absolute ceiling. See AdaptiveRange in dynamics.js for
+// why: absolute measurements clip on any real master, and a clipped feature
+// stops saying anything at all.
+
+import { AdaptiveRange, Envelope, OnsetDetector, clamp, smoothstep } from './dynamics.js';
 
 export const SOURCES = {
     SYSTEM: 'system',
@@ -23,6 +30,31 @@ export const SOURCE_LABELS = {
 
 const FFT_SIZE = 2048;
 
+// Log-spaced analysis bands. Twenty-four is enough to read as a spectrum when
+// stood up inside the lattice, and cheap enough to normalize each one
+// separately.
+export const BAND_COUNT = 24;
+const BAND_LO_HZ = 40;
+const BAND_HI_HZ = 12000;
+
+// Anything quieter than this is silence as far as the dB maths is concerned;
+// getFloatFrequencyData reports -Infinity for a digitally silent bin.
+const DB_FLOOR = -110;
+// Weighting reference for the centroid: bins below this contribute nothing.
+const DB_REF = -85;
+
+// The one place absolute loudness still matters. Normalizing against a signal's
+// own range has no notion of silence -- silence measured against silence would
+// come out mid-scale and the app would behave as though music were playing --
+// so an absolute gate multiplies every feature.
+const GATE_LO_DB = -72;
+const GATE_HI_DB = -46;
+
+// A frame that arrives after the tab was backgrounded should not flush every
+// running average, and a zero-length one must not divide anything.
+const DT_MIN = 1 / 240;
+const DT_MAX = 0.25;
+
 export class AudioEngine {
     constructor() {
         this.ctx = null;
@@ -35,12 +67,29 @@ export class AudioEngine {
 
         this.freq = null;
         this.time = null;
+        this.bands = new Float32Array(BAND_COUNT);
+        this._bandDb = new Float32Array(BAND_COUNT);
+        this._prevBandDb = null;   // null until the first frame has been read
+        this._bandBins = null;     // [lo, hi] per band, rebuilt when the rate changes
+        this._bandLogHz = new Float32Array(BAND_COUNT);
 
-        // Beat detection state: a fast and a slow envelope of bass energy.
-        this._bassFast = 0;
-        this._bassSlow = 0;
-        this._level = 0;
-        this._lastBeat = 0;
+        // One adaptive window per feature, so a bright track and a bassy one
+        // both use their full range instead of each pinning a different axis.
+        this._ranges = {
+            level: new AdaptiveRange({ attack: 0.08, release: 5, minSpan: 9, start: DB_FLOOR }),
+            bass: new AdaptiveRange({ attack: 0.08, release: 6, minSpan: 10, start: DB_FLOOR }),
+            mid: new AdaptiveRange({ attack: 0.08, release: 6, minSpan: 10, start: DB_FLOOR }),
+            treble: new AdaptiveRange({ attack: 0.08, release: 6, minSpan: 10, start: DB_FLOOR }),
+            // Slower, because the centroid drives hue and rule shift: those want
+            // to follow the arrangement, not every hi-hat.
+            centroid: new AdaptiveRange({ attack: 0.5, release: 9, minSpan: 0.35, start: 0.5 }),
+            flux: new AdaptiveRange({ attack: 0.05, release: 4, minSpan: 12 }),
+        };
+        this._bandRanges = Array.from({ length: BAND_COUNT }, () => new AdaptiveRange({
+            attack: 0.06, release: 5, minSpan: 12, start: DB_FLOOR,
+        }));
+        this._onset = new OnsetDetector();
+        this._pulse = new Envelope({ attack: 0.008, release: 0.3 });
     }
 
     get active() {
@@ -56,9 +105,16 @@ export class AudioEngine {
             this.ctx = new Ctor();
             this.analyser = this.ctx.createAnalyser();
             this.analyser.fftSize = FFT_SIZE;
-            this.analyser.smoothingTimeConstant = 0.6;
-            this.freq = new Uint8Array(this.analyser.frequencyBinCount);
+            // No smoothing here. The analyser's own low-pass blunts exactly the
+            // transients the onset detector is looking for; smoothing belongs
+            // downstream, per feature, where each one can pick its own rate.
+            this.analyser.smoothingTimeConstant = 0;
+            // Float rather than byte data: getByteFrequencyData compresses the
+            // spectrum into minDecibels..maxDecibels and clips everything above
+            // -30dB flat, which is where loud music lives.
+            this.freq = new Float32Array(this.analyser.frequencyBinCount);
             this.time = new Uint8Array(this.analyser.fftSize);
+            this._buildBands();
         }
         if (this.ctx.state === 'suspended') await this.ctx.resume();
         return this.ctx;
@@ -79,6 +135,19 @@ export class AudioEngine {
         this.source = null;
         this.sourceKind = null;
         this.stream = null;
+        this.resetFeatures();
+    }
+
+    // A new source is a new signal. Carrying the old one's range across would
+    // make the first seconds of the new one read as whatever the last one was
+    // relative to -- a quiet track after a loud one would look like silence.
+    resetFeatures() {
+        for (const range of Object.values(this._ranges)) range.reset();
+        for (const range of this._bandRanges) range.reset();
+        this._onset.reset();
+        this._pulse.reset();
+        this._prevBandDb = null;
+        this.bands.fill(0);
     }
 
     // Screen/tab share with audio. preferCurrentTab narrows the picker to this
@@ -197,22 +266,72 @@ export class AudioEngine {
         return this.sourceKind;
     }
 
-    //-------FEATURES-------
-    // Called once per animation frame. Returns normalized 0-1 values.
-    features(now = performance.now()) {
-        const silent = {
-            bass: 0, mid: 0, treble: 0, level: 0, centroid: 0,
-            beat: false, beatStrength: 0,
-        };
-        if (!this.active) return silent;
+    //-------BANDS-------
+    // Log-spaced band edges, in bins. Built once per context: they depend only
+    // on the sample rate and the FFT size, neither of which changes.
+    _buildBands() {
+        const binHz = this.ctx.sampleRate / this.analyser.fftSize;
+        const bins = this.analyser.frequencyBinCount;
+        const ratio = Math.log(BAND_HI_HZ / BAND_LO_HZ) / BAND_COUNT;
+        this._bandBins = [];
+        for (let b = 0; b < BAND_COUNT; b++) {
+            const loHz = BAND_LO_HZ * Math.exp(ratio * b);
+            const hiHz = BAND_LO_HZ * Math.exp(ratio * (b + 1));
+            const lo = clamp(Math.floor(loHz / binHz), 0, bins - 1);
+            // The lowest bands are narrower than one bin at this resolution, so
+            // several of them end up reading the same one. That is harmless --
+            // they simply move together -- and cheaper than a second FFT.
+            const hi = clamp(Math.max(lo, Math.ceil(hiHz / binHz) - 1), 0, bins - 1);
+            this._bandBins.push([lo, hi]);
+            this._bandLogHz[b] = Math.log2(Math.sqrt(loHz * hiHz));
+        }
+    }
 
-        this.analyser.getByteFrequencyData(this.freq);
+    //-------FEATURES-------
+    // Called once per animation frame. Returns normalized 0-1 values, each one
+    // measured against this signal's own recent range.
+    features(dt = 1 / 60) {
+        if (!this.active) return silentFeatures(this.bands);
+        const step = clamp(dt, DT_MIN, DT_MAX);
+
+        this.analyser.getFloatFrequencyData(this.freq);
         this.analyser.getByteTimeDomainData(this.time);
 
-        const binHz = this.ctx.sampleRate / this.analyser.fftSize;
-        const bass = bandMean(this.freq, 20, 160, binHz);
-        const mid = bandMean(this.freq, 160, 2000, binHz);
-        const treble = bandMean(this.freq, 2000, 8000, binHz);
+        const freq = this.freq;
+        const bandDb = this._bandDb;
+        for (let b = 0; b < BAND_COUNT; b++) {
+            const [lo, hi] = this._bandBins[b];
+            let sum = 0;
+            for (let i = lo; i <= hi; i++) sum += Math.max(freq[i], DB_FLOOR);
+            bandDb[b] = sum / (hi - lo + 1);
+        }
+
+        // Spectral flux: how much of the spectrum got louder since the last
+        // frame, as a rate so the number means the same thing at any frame rate.
+        let flux = 0;
+        if (this._prevBandDb) {
+            for (let b = 0; b < BAND_COUNT; b++) {
+                const rise = bandDb[b] - this._prevBandDb[b];
+                if (rise > 0) flux += rise;
+            }
+            flux = flux / BAND_COUNT / step;
+        } else {
+            this._prevBandDb = new Float32Array(BAND_COUNT);
+        }
+        this._prevBandDb.set(bandDb);
+
+        // Centroid over log frequency, weighted by how far each band stands
+        // above the noise floor. Log spacing is what makes an octave shift move
+        // it by the same amount wherever it happens.
+        let weighted = 0, total = 0;
+        for (let b = 0; b < BAND_COUNT; b++) {
+            const w = Math.max(0, bandDb[b] - DB_REF);
+            weighted += w * this._bandLogHz[b];
+            total += w;
+        }
+        const centroidHz = total > 0
+            ? (weighted / total - Math.log2(BAND_LO_HZ)) / Math.log2(BAND_HI_HZ / BAND_LO_HZ)
+            : 0.5;
 
         let sumSquares = 0;
         for (let i = 0; i < this.time.length; i++) {
@@ -220,44 +339,60 @@ export class AudioEngine {
             sumSquares += v * v;
         }
         const rms = Math.sqrt(sumSquares / this.time.length);
-        this._level += (rms - this._level) * 0.2;
+        const levelDb = Math.max(DB_FLOOR, 20 * Math.log10(rms || 1e-9));
 
-        // Spectral centroid, normalized against 8kHz rather than Nyquist so the
-        // usable range of real music spreads across 0-1 instead of hugging zero.
-        let weighted = 0, total = 0;
-        for (let i = 0; i < this.freq.length; i++) {
-            const m = this.freq[i];
-            weighted += m * i * binHz;
-            total += m;
-        }
-        const centroid = total > 0 ? Math.min(1, weighted / total / 8000) : 0;
+        // The gate, and the only absolute judgement in here.
+        const gate = smoothstep(GATE_LO_DB, GATE_HI_DB, levelDb);
 
-        this._bassFast += (bass - this._bassFast) * 0.35;
-        this._bassSlow += (bass - this._bassSlow) * 0.02;
-        let beat = false;
-        let beatStrength = 0;
-        const ratio = this._bassSlow > 0.01 ? this._bassFast / this._bassSlow : 0;
-        if (ratio > 1.35 && this._bassFast > 0.05 && now - this._lastBeat > 180) {
-            beat = true;
-            beatStrength = Math.min(1, (ratio - 1.35) / 0.8);
-            this._lastBeat = now;
+        const ranges = this._ranges;
+        const level = ranges.level.push(levelDb, step) * gate;
+        const bass = ranges.bass.push(this._binMeanDb(20, 160), step) * gate;
+        const mid = ranges.mid.push(this._binMeanDb(160, 2000), step) * gate;
+        const treble = ranges.treble.push(this._binMeanDb(2000, 8000), step) * gate;
+        const centroid = ranges.centroid.push(centroidHz, step);
+        const fluxNorm = ranges.flux.push(flux, step) * gate;
+
+        for (let b = 0; b < BAND_COUNT; b++) {
+            this.bands[b] = this._bandRanges[b].push(bandDb[b], step) * gate;
         }
+
+        const beatStrength = this._onset.push(flux, step) * gate;
+        const beat = beatStrength > 0;
+        if (beat) this._pulse.trigger(beatStrength);
+        this._pulse.push(0, step);
 
         return {
             bass, mid, treble,
-            level: Math.min(1, this._level * 3),
+            level,
             centroid,
+            flux: fluxNorm,
             beat,
             beatStrength,
+            pulse: this._pulse.value,
+            bands: this.bands,
         };
+    }
+
+    // Mean dB across a frequency span, straight off the FFT. Used for the three
+    // broad bands, which want their own edges rather than the log band grid's.
+    _binMeanDb(loHz, hiHz) {
+        const binHz = this.ctx.sampleRate / this.analyser.fftSize;
+        const freq = this.freq;
+        const lo = clamp(Math.floor(loHz / binHz), 0, freq.length - 1);
+        const hi = clamp(Math.ceil(hiHz / binHz), lo, freq.length - 1);
+        let sum = 0;
+        for (let i = lo; i <= hi; i++) sum += Math.max(freq[i], DB_FLOOR);
+        return sum / (hi - lo + 1);
     }
 }
 
-function bandMean(freq, loHz, hiHz, binHz) {
-    const lo = Math.max(0, Math.floor(loHz / binHz));
-    const hi = Math.min(freq.length - 1, Math.ceil(hiHz / binHz));
-    if (hi < lo) return 0;
-    let sum = 0;
-    for (let i = lo; i <= hi; i++) sum += freq[i];
-    return sum / (hi - lo + 1) / 255;
+// Shared shape for "no audio", so callers never have to test for it. The
+// centroid rests at 0.5 rather than 0 because it is the one bipolar feature:
+// zero is "as dark as this gets", which would hold the rule's birth window
+// shifted down the whole time nothing is connected.
+function silentFeatures(bands) {
+    return {
+        bass: 0, mid: 0, treble: 0, level: 0, centroid: 0.5, flux: 0,
+        beat: false, beatStrength: 0, pulse: 0, bands,
+    };
 }

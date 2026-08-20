@@ -2,9 +2,13 @@
 
 A 3D cellular automaton on a voxel lattice, driven by whatever music is playing.
 
-Audio does more than tint the picture: loudness sets the tick rate, beats seed
-bursts of new cells, and spectral brightness shifts the birth thresholds — so the
-lattice never settles while sound is playing.
+Audio does more than tint the picture: loudness sets the tick rate, onsets seed
+bursts of new cells and send shells expanding out through the lattice, the
+spectrum lights the height it belongs to, and spectral brightness shifts the
+birth thresholds — so the lattice never settles while sound is playing.
+
+Every feature is measured **against the signal's own recent range**, not against
+a fixed ceiling, which is what keeps it moving. See *Reacting to audio* below.
 
 Open `index.html` through a local web server (not `file://` — ES modules and
 audio capture both refuse it):
@@ -52,6 +56,7 @@ the threshold errs the other way: anything past ~12px or ~300ms is a drag.
 **Wrap edges** makes the lattice toroidal (the default) so cells at the faces
 have full neighborhoods. **Never let it die** reseeds a burst whenever the
 population collapses, so the toy is never empty when no audio is driving it.
+**Keep it breathable** is its opposite number, described under *Density* below.
 **Adapt quality to frame rate** is described under Performance below.
 
 ## Layout
@@ -116,6 +121,41 @@ That is a property of the rule family, not a tuning choice.
 The presets live in `RULE_PRESETS` in `src/automata.js`; the dropdown and the
 test both read from it, so there is one list rather than two that drift.
 
+## Reacting to audio
+
+The hard part is not extracting features, it is that **absolute features clip.**
+`getByteFrequencyData` compresses the spectrum into a 70dB window and pins every
+bin above -30dB at 255, which is where loud music lives; RMS loudness compared
+against a fixed maximum pins in the same way on any modern master. Once a
+feature is pinned it has stopped saying anything, and the whole picture holds
+still while the music does not. Worst of all, the old beat detector divided a
+fast bass envelope by a slow one — when both clip the ratio is 1, so beats
+stopped being found exactly in the music that has the most of them.
+
+So every feature is normalized against its own recent range (`AdaptiveRange` in
+`src/dynamics.js`): a floor that drops fast and rises slowly, a ceiling that
+rises fast and drops slowly, and the signal mapped onto 0–1 between them. A
+transient reaches the top of the range immediately, and the range reopens over
+the following seconds, so a quiet passage reads quiet again shortly after a loud
+one. A steady signal converges on mid-scale rather than on either end.
+
+Pure normalization has no idea what silence is — silence measured against
+silence would come out mid-scale — so one absolute gate on loudness multiplies
+every feature, and that is the only absolute judgement left.
+
+Beats come from **spectral flux against an adaptive threshold** built from the
+signal's own mean and deviation, which is immune to the clipping failure above.
+
+What each feature drives:
+
+| Feature | Drives |
+| --- | --- |
+| Loudness | Step rate, voxel size, camera dolly |
+| Onset density (flux) | Step rate, alongside loudness |
+| Onsets | Bursts of new cells, shockwaves, the emissive punch |
+| Spectral centroid | Hue, birth-window shift, the height bursts land at |
+| Per-band energy | Brightness of the lattice at that height |
+
 ## Step rate and motion
 
 The automaton runs at **20 steps/sec** with no audio, and loudness drives it
@@ -137,7 +177,9 @@ frames. Two things follow from that:
 ## Performance
 
 Add `?perf` to the URL for a live breakdown in the HUD: simulation ms, instance
-sync ms, frame ms, and the current quality level.
+sync ms, frame ms, the current quality level, and the normalized loudness and
+onset density. Those last two are the ones to watch when the picture looks
+stuck — either of them sitting at 1.00 is the pinning described above.
 
 Two things dominate a tick, and the renderer used to cost twice the simulation.
 Measured per tick, before and after this pass:
@@ -203,8 +245,49 @@ oracles. The tests check the real, fused path against them cell-for-cell —
 otherwise the separable-vs-naive test would keep passing while covering code
 nothing runs.
 
+## Density
+
+Beat bursts inject cells with no idea how full the lattice already is, so a
+dense rule under loud music used to pack the cube into an opaque block with
+everything interesting happening where nobody could see it. **Keep it
+breathable** pushes back, weakest lever first: bursts stop feeding a lattice
+that is already full, then new births are thinned, and throughout, the voxels
+shrink as the lattice crowds so you can see into it rather than at it.
+
+Measured over 400 generations at 48³, the shipped rules settle between 26% and
+33% full on their own, so the burst and birth levers only engage past 30% — what
+they exist to catch is audio-driven growth beyond what the automaton does
+unaided, not the automaton itself. Shrinking is separate and continuous, because
+legibility is a question about the lattice in front of you, not about who filled
+it.
+
+Births are thinned with a probability roll rather than by shifting the rule's
+birth window, which sounds equivalent and is not: whether shifting that window
+adds or removes cells depends on the local neighbor count, so it pushes the
+wrong way in exactly the crowded regions this is meant to open up.
+
+## Colour and light
+
+Everything the music adds — the transient glow, the band sitting at a cell's
+height, any shockwave passing through — is added on top of the key light and
+then **tone mapped**, `1 - exp(-colour * exposure)`, rather than clipped. Added
+light used to run straight past 1.0 and flatten to white, so every loud moment
+looked identical to the one before it. Compressing instead keeps a harder hit
+reading as harder, and is what lets the glow be pushed far enough to be worth
+watching.
+
+The spectrum is uploaded as a one-texel-per-band texture and sampled in the
+vertex shader by lattice height — a texture rather than a uniform array because
+GLSL ES 1.00 will not index one of those with a computed index, and a loop over
+every band per vertex costs too much on the mobile path.
+
 ## Tuning
 
 Every constant coupling audio to the simulation lives in `TUNING` in
 `src/mapping.js`, behind the sensitivity slider. Set sensitivity to 0 and the
 simulation is deterministic again: same seed, same rule, same lattice.
+
+The feature extraction has its own knobs — attack and release per feature, the
+silence gate, the onset threshold — in `src/audio.js` and `src/dynamics.js`.
+`dynamics.js` is pure and has no imports, so what it does is pinned down by
+`test/dynamics.test.mjs` rather than only by ear.

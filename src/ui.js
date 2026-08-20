@@ -31,6 +31,7 @@ export function bindUI(app) {
         size: $('size'),
         wrap: $('wrap'),
         revive: $('revive'),
+        breathe: $('breathe'),
         autoQuality: $('autoQuality'),
         sensitivity: $('sensitivity'),
         sensitivityLabel: $('sensitivityLabel'),
@@ -54,6 +55,8 @@ export function bindUI(app) {
         perfSync: $('perfSync'),
         perfFrame: $('perfFrame'),
         perfQuality: $('perfQuality'),
+        perfLevel: $('perfLevel'),
+        perfFlux: $('perfFlux'),
         view: $('view'),
         hud: $('hud'),
         dock: $('dock'),
@@ -91,6 +94,12 @@ export function bindUI(app) {
 
     els.revive.addEventListener('change', () => {
         app.autoRevive = els.revive.checked;
+    });
+
+    // Its opposite number: revive stops the lattice emptying out, this stops it
+    // filling in until the outside is all anyone can see.
+    els.breathe.addEventListener('change', () => {
+        app.breathe = els.breathe.checked;
     });
 
     els.sensitivity.addEventListener('input', () => {
@@ -244,6 +253,8 @@ export function bindUI(app) {
             els.perfSync.textContent = stats.perf.sync.toFixed(2);
             els.perfFrame.textContent = stats.perf.frame.toFixed(1);
             els.perfQuality.textContent = stats.quality;
+            els.perfLevel.textContent = stats.level.toFixed(2);
+            els.perfFlux.textContent = stats.flux.toFixed(2);
         },
     };
 }

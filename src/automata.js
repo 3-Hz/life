@@ -275,8 +275,14 @@ export class Lattice {
     //
     // computeCounts() and countNeighborsNaive() remain the oracles this is
     // tested against -- see test/automata.test.mjs.
-    step(rule) {
+    //
+    // birthChance below 1 lets a caller thin new births without touching what is
+    // already alive, which is how the density controller keeps a lattice from
+    // packing solid. At the default it is not consulted at all, so the hot path
+    // is unchanged for anyone not using it.
+    step(rule, { birthChance = 1, rng = null } = {}) {
         const { sMin, sMax, bMin, bMax } = rule;
+        const thin = birthChance < 1 && rng !== null;
         const n = this.n;
         const wrap = this.wrap;
         const cells = this.cells;
@@ -335,7 +341,8 @@ export class Lattice {
                 const c = sum - was;
                 counts[idx] = c;
 
-                const on = was ? (c >= sMin && c <= sMax) : (c >= bMin && c <= bMax);
+                let on = was ? (c >= sMin && c <= sMax) : (c >= bMin && c <= bMax);
+                if (thin && on && !was && rng() >= birthChance) on = false;
                 next[idx] = on ? 1 : 0;
                 if (!on) age[idx] = 0;
                 else if (was) age[idx] = age[idx] < 255 ? age[idx] + 1 : 255;
