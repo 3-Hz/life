@@ -44,12 +44,17 @@ interface UiElements {
     clear: HTMLButtonElement;
     pause: HTMLButtonElement;
     step: HTMLButtonElement;
+    trackSearchToggle: HTMLButtonElement;
+    playerSearchArea: HTMLElement;
     trackQuery: HTMLInputElement;
     trackSearch: HTMLButtonElement;
     trackResults: HTMLElement;
     nowPlaying: HTMLElement;
     nowPlayingTitle: HTMLElement;
     trackToggle: HTMLButtonElement;
+    trackSeek: HTMLInputElement;
+    trackElapsed: HTMLElement;
+    trackDuration: HTMLElement;
     fileInput: HTMLInputElement;
     audioStatus: HTMLElement;
     playerNote: HTMLElement;
@@ -70,8 +75,9 @@ interface UiElements {
     hud: HTMLElement;
     dock: HTMLElement;
     panel: HTMLElement;
+    audiusPlayer: HTMLElement;
     panelTab: HTMLButtonElement;
-    quickPause: HTMLButtonElement;
+    playerToggle: HTMLButtonElement;
     hudToggle: HTMLButtonElement;
 }
 
@@ -144,12 +150,17 @@ export function bindUI(app: UiApp): UiBinding {
         clear: $<HTMLButtonElement>('clear'),
         pause: $<HTMLButtonElement>('pause'),
         step: $<HTMLButtonElement>('step'),
+        trackSearchToggle: $<HTMLButtonElement>('trackSearchToggle'),
+        playerSearchArea: $<HTMLElement>('playerSearchArea'),
         trackQuery: $<HTMLInputElement>('trackQuery'),
         trackSearch: $<HTMLButtonElement>('trackSearch'),
         trackResults: $<HTMLElement>('trackResults'),
         nowPlaying: $<HTMLElement>('nowPlaying'),
         nowPlayingTitle: $<HTMLElement>('nowPlayingTitle'),
         trackToggle: $<HTMLButtonElement>('trackToggle'),
+        trackSeek: $<HTMLInputElement>('trackSeek'),
+        trackElapsed: $<HTMLElement>('trackElapsed'),
+        trackDuration: $<HTMLElement>('trackDuration'),
         fileInput: $<HTMLInputElement>('fileInput'),
         audioStatus: $<HTMLElement>('audioStatus'),
         playerNote: $<HTMLElement>('playerNote'),
@@ -170,8 +181,9 @@ export function bindUI(app: UiApp): UiBinding {
         hud: $<HTMLElement>('hud'),
         dock: $<HTMLElement>('dock'),
         panel: $<HTMLElement>('panel'),
+        audiusPlayer: $<HTMLElement>('audiusPlayer'),
         panelTab: $<HTMLButtonElement>('panelTab'),
-        quickPause: $<HTMLButtonElement>('quickPause'),
+        playerToggle: $<HTMLButtonElement>('playerToggle'),
         hudToggle: $<HTMLButtonElement>('hudToggle'),
     } satisfies UiElements;
 
@@ -235,35 +247,80 @@ export function bindUI(app: UiApp): UiBinding {
     els.step.addEventListener('click', () => app.stepOnce());
     const syncPause = () => {
         els.pause.textContent = app.paused ? 'PLAY' : 'PAUSE';
-        els.quickPause.textContent = app.paused ? '▶' : '❚❚';
     };
     const togglePause = () => {
         app.togglePause();
         syncPause();
     };
     els.pause.addEventListener('click', togglePause);
-    els.quickPause.addEventListener('click', togglePause);
 
     //-------PANEL-------
-    // The tab is the only thing that opens and closes the panel. A tap on the
-    // canvas re-seeds, so it deliberately does not double as a dismiss.
-    const setPanelOpen = (open: boolean): void => {
-        document.body.classList.toggle('panel-closed', !open);
-        els.panelTab.setAttribute('aria-expanded', String(open));
-    };
-    // Open by default only where there is room for it. A rail costs a desktop
-    // almost nothing, but on a landscape phone it still eats 40% of the screen,
-    // and a portrait sheet eats most of it.
-    setPanelOpen(window.matchMedia('(min-width: 900px) and (orientation: landscape)').matches);
-    els.panelTab.addEventListener('click', () => {
-        setPanelOpen(document.body.classList.contains('panel-closed'));
-    });
-
     els.hudToggle.addEventListener('click', () => {
         const showing = els.hud.hidden;
         els.hud.hidden = !showing;
         els.hudToggle.setAttribute('aria-pressed', String(showing));
     });
+
+    const desktopLayout = window.matchMedia('(min-width: 900px) and (orientation: landscape)');
+    let panelOpen = desktopLayout.matches;
+    let playerOpen = false;
+    let searchOpen = false;
+
+    function setSearchOpen(open: boolean, { focus = false }: { focus?: boolean } = {}): void {
+        searchOpen = open;
+        els.trackSearchToggle.setAttribute('aria-expanded', String(open));
+        els.trackSearchToggle.setAttribute('aria-label', open ? 'Hide Audius search' : 'Show Audius search');
+        els.trackSearchToggle.title = open ? 'Hide Audius search' : 'Show Audius search';
+        els.playerSearchArea.setAttribute('aria-hidden', String(!open));
+        els.playerSearchArea.toggleAttribute('inert', !open);
+        els.playerSearchArea.toggleAttribute('hidden', !open);
+        if (open && focus) requestAnimationFrame(() => els.trackQuery.focus());
+        else if (!open && focus) els.trackSearchToggle.focus();
+    }
+
+    // The panel and the mobile player are two sheets competing for the same
+    // edge of the screen. Keeping them mutually exclusive makes their focus
+    // order and the renderer's insets unambiguous.
+    function setPanelOpen(open: boolean): void {
+        const desktop = desktopLayout.matches;
+        panelOpen = open;
+        if (open && !desktop) {
+            playerOpen = false;
+            document.body.classList.add('player-closed');
+            els.playerToggle.setAttribute('aria-expanded', 'false');
+            els.audiusPlayer.setAttribute('aria-hidden', 'true');
+            els.audiusPlayer.toggleAttribute('inert', true);
+        }
+        document.body.classList.toggle('panel-closed', !open);
+        els.panelTab.setAttribute('aria-expanded', String(open));
+        els.panel.toggleAttribute('inert', !open);
+        syncChromeMetrics();
+    }
+
+    function setPlayerOpen(open: boolean, { focus = false }: { focus?: boolean } = {}): void {
+        if (desktopLayout.matches) {
+            playerOpen = false;
+            document.body.classList.remove('player-closed');
+            els.playerToggle.setAttribute('aria-expanded', 'false');
+            els.audiusPlayer.setAttribute('aria-hidden', 'false');
+            els.audiusPlayer.toggleAttribute('inert', false);
+            return;
+        }
+        if (open) {
+            panelOpen = false;
+            document.body.classList.add('panel-closed');
+            els.panelTab.setAttribute('aria-expanded', 'false');
+            els.panel.toggleAttribute('inert', true);
+        }
+        playerOpen = open;
+        document.body.classList.toggle('player-closed', !open);
+        els.playerToggle.setAttribute('aria-expanded', String(open));
+        els.audiusPlayer.setAttribute('aria-hidden', String(!open));
+        els.audiusPlayer.toggleAttribute('inert', !open);
+        syncChromeMetrics();
+        if (open) requestAnimationFrame(() => els.trackQuery.focus());
+        else if (focus) els.playerToggle.focus();
+    }
 
     // Audio sources are modes, not a row of unrelated actions. Tabs only
     // reveal a mode; the action inside each panel still owns the user gesture
@@ -301,26 +358,61 @@ export function bindUI(app: UiApp): UiBinding {
         tab.addEventListener('click', () => activateSourceTab(tab.dataset.source as AudioSource));
         tab.addEventListener('keydown', moveSourceTab);
     }
-    activateSourceTab(SOURCES.STREAM);
+    const firstAdvancedSource = sourceTabs.find((tab) => !tab.disabled)?.dataset.source as AudioSource | undefined;
+    if (firstAdvancedSource) activateSourceTab(firstAdvancedSource);
 
-    // Everything that has to clear the dock reads its measured size: the panel
-    // sits beside or above it, and the renderer centres the lattice on what it
-    // leaves. Hard-coding it put the dock on top of the panel's last row, since
-    // 44px touch targets plus padding never match a round number in CSS.
-    const syncDockMetrics = () => {
+    // Everything that affects framing reads its measured size: the dock is
+    // permanent chrome, and an open controls panel takes a real slice out of
+    // the visualization rather than merely covering it.
+    const syncChromeMetrics = () => {
         const box = els.dock.getBoundingClientRect();
         const root = document.documentElement.style;
         root.setProperty('--dock', `${box.height}px`);
         root.setProperty('--dock-w', `${box.width}px`);
-        // The renderer centres the lattice on what the dock leaves visible,
-        // mirroring where the CSS puts the dock in each orientation.
-        const portrait = window.matchMedia('(orientation: portrait)').matches;
-        app.renderer.setChromeInsets(portrait ? { bottom: box.height } : { right: box.width });
+        const right = desktopLayout.matches
+            ? box.width + (panelOpen ? els.panel.offsetWidth : 0)
+            : 0;
+        const bottom = desktopLayout.matches
+            ? 0
+            : box.height + (panelOpen ? els.panel.offsetHeight : 0);
+        root.setProperty('--visual-right', `${right}px`);
+        root.setProperty('--visual-bottom', `${bottom}px`);
+        app.renderer.setChromeInsets(desktopLayout.matches ? { right } : { bottom });
     };
-    syncDockMetrics();
-    window.addEventListener('resize', syncDockMetrics);
-    window.addEventListener('orientationchange', syncDockMetrics);
-    if (window.ResizeObserver) new ResizeObserver(syncDockMetrics).observe(els.dock);
+    const syncResponsiveMode = () => {
+        if (desktopLayout.matches) {
+            setSearchOpen(false);
+            playerOpen = false;
+            document.body.classList.remove('player-closed');
+            els.playerToggle.setAttribute('aria-expanded', 'false');
+            els.audiusPlayer.setAttribute('aria-hidden', 'false');
+            els.audiusPlayer.toggleAttribute('inert', false);
+            setPanelOpen(true);
+        } else {
+            setSearchOpen(true);
+            setPanelOpen(false);
+            setPlayerOpen(false);
+        }
+        syncChromeMetrics();
+    };
+    // Open by default only where there is room for a rail. Smaller and portrait
+    // layouts start with both sheets closed, leaving the visualization clear.
+    setSearchOpen(!desktopLayout.matches);
+    setPanelOpen(desktopLayout.matches);
+    if (!desktopLayout.matches) setPlayerOpen(false);
+    els.panelTab.addEventListener('click', () => setPanelOpen(!panelOpen));
+    els.playerToggle.addEventListener('click', () => setPlayerOpen(!playerOpen, { focus: true }));
+    els.trackSearchToggle.addEventListener('click', () => setSearchOpen(!searchOpen, { focus: true }));
+    syncChromeMetrics();
+    window.addEventListener('resize', syncChromeMetrics);
+    window.addEventListener('orientationchange', syncChromeMetrics);
+    if (window.ResizeObserver) {
+        const observer = new ResizeObserver(syncChromeMetrics);
+        observer.observe(els.dock);
+        observer.observe(els.panel);
+    }
+    if (desktopLayout.addEventListener) desktopLayout.addEventListener('change', syncResponsiveMode);
+    else desktopLayout.addListener(syncResponsiveMode);
 
     //-------CANVAS GESTURES-------
     // Tap re-seeds; drag rotates; pinch zooms. Re-seeding throws the board away,
@@ -413,20 +505,58 @@ export function bindUI(app: UiApp): UiBinding {
         void runSearch();
     });
 
-    // Transport, which owning the element makes trivial. Reading paused off the
-    // element rather than tracking it here keeps the label honest when playback
-    // stops for reasons we did not initiate.
+    // Transport, which owning the element makes trivial. Reading paused and
+    // currentTime off the element rather than tracking them here keeps both the
+    // label and the playhead honest when playback stops for reasons we did not
+    // initiate.
+    let boundTransportElement: HTMLAudioElement | null = null;
+    const transportEvents = [
+        'play', 'pause', 'timeupdate', 'loadedmetadata', 'durationchange', 'progress', 'emptied',
+    ] as const;
+    const syncTrackProgress = (): void => {
+        const element = app.audio.element;
+        const duration = element?.duration ?? Number.NaN;
+        const current = element?.currentTime ?? Number.NaN;
+        const seekable = Boolean(element) && Number.isFinite(duration) && duration > 0;
+        els.trackToggle.disabled = !element;
+        els.trackSeek.disabled = !seekable;
+        els.trackSeek.max = seekable ? String(duration) : '1';
+        els.trackSeek.value = seekable ? String(Math.min(current, duration)) : '0';
+        els.trackElapsed.textContent = formatDuration(current);
+        els.trackDuration.textContent = formatDuration(duration);
+    };
     const syncTransport = (): void => {
         const element = app.audio.element;
         const playing = Boolean(element) && !element!.paused;
         els.trackToggle.textContent = playing ? '❚❚' : '▶';
         els.trackToggle.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+        syncTrackProgress();
+    };
+    const bindTransport = (element: HTMLAudioElement | null): void => {
+        if (boundTransportElement === element) {
+            syncTransport();
+            return;
+        }
+        if (boundTransportElement) {
+            for (const event of transportEvents) boundTransportElement.removeEventListener(event, syncTransport);
+        }
+        boundTransportElement = element;
+        if (boundTransportElement) {
+            for (const event of transportEvents) boundTransportElement.addEventListener(event, syncTransport);
+        }
+        syncTransport();
     };
     els.trackToggle.addEventListener('click', () => {
         const element = app.audio.element;
         if (!element) return;
-        if (element.paused) void element.play(); else element.pause();
+        if (element.paused) void element.play().catch(syncTransport); else element.pause();
         syncTransport();
+    });
+    els.trackSeek.addEventListener('input', () => {
+        const element = app.audio.element;
+        if (!element || !Number.isFinite(element.duration)) return;
+        element.currentTime = Number(els.trackSeek.value);
+        syncTrackProgress();
     });
 
     els.fileInput.addEventListener('change', () => {
@@ -435,6 +565,12 @@ export function bindUI(app: UiApp): UiBinding {
     });
 
     document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            if (desktopLayout.matches && searchOpen) setSearchOpen(false, { focus: true });
+            else if (playerOpen) setPlayerOpen(false);
+            else if (panelOpen) setPanelOpen(false);
+            return;
+        }
         if (event.target instanceof Element && event.target.matches('input, select, textarea')) return;
         if (event.key === ' ') {
             event.preventDefault();
@@ -447,7 +583,7 @@ export function bindUI(app: UiApp): UiBinding {
     const ui: UiBinding = {
         els,
         setActiveSource(kind: AudioSource): void {
-            activateSourceTab(kind);
+            if (kind !== SOURCES.STREAM) activateSourceTab(kind);
         },
         setSizeSelection(n: number): void {
             els.size.value = String(n);
@@ -455,6 +591,7 @@ export function bindUI(app: UiApp): UiBinding {
         setAudioStatus(text: string, isError = false): void {
             els.audioStatus.textContent = text;
             els.audioStatus.classList.toggle('error', isError);
+            bindTransport(app.audio.element);
         },
         setPlayerNote(text: string): void {
             els.playerNote.textContent = text;
@@ -470,11 +607,7 @@ export function bindUI(app: UiApp): UiBinding {
             // worse than no label. The element is replaced per track, so these
             // listeners go with it.
             const element = app.audio.element;
-            if (element) {
-                element.addEventListener('play', syncTransport);
-                element.addEventListener('pause', syncTransport);
-            }
-            syncTransport();
+            bindTransport(element);
         },
         updateHud(stats: HudStats): void {
             els.hudGen.textContent = String(stats.generation);

@@ -38,7 +38,7 @@ could — open API, no key, CORS on the stream and on the redirect in front of i
 
 | Source | How it works | Where it works |
 | --- | --- | --- |
-| **Music** | search Audius, stream it through our own element | Everywhere, no permission — the only song source that works on a phone |
+| **Audius / Music** | search Audius, stream it through our own element | Everywhere, no permission — the primary song source and the only one that works on a phone |
 | **System / other tab** | `getDisplayMedia` — share a tab or screen with audio | Desktop Chromium, for reaching Spotify or YouTube; "share system audio" only on Windows and ChromeOS |
 | **Microphone** | `getUserMedia` | Everywhere. Also the macOS route to true system audio, via a loopback device such as BlackHole |
 | **Audio file** | pick a local file | Everywhere, no picker, no permission — the most reproducible option |
@@ -47,19 +47,29 @@ could — open API, no key, CORS on the stream and on the redirect in front of i
 Every source still needs a click, because `AudioContext` starts suspended until
 a gesture. Only the middle two add a permission prompt on top of that.
 
-The search box also takes an `audius.co` link. Audius is not the only host that
-qualifies: anything serving audio with the CORS header works through the same
-path, and `archive.org` downloads carry `Access-Control-Allow-Origin: *` across
-some 290,000 live recordings.
+The Audius player is persistent and centered at the bottom of the usable
+visualization on a PC. Its search icon toggles the search field and result list
+without hiding the now-playing transport or seek bar. On a smaller layout, the
+`MUSIC` button in the dock opens it as a bottom-sheet overlay with search and
+results visible. It includes play/pause, elapsed and total time, and a seek bar;
+the browser uses range requests so the playhead can scrub the track. The search
+box also takes an `audius.co` link.
+
+Audius is not the only host that qualifies: anything serving audio with the CORS
+header works through the same path, and `archive.org` downloads carry
+`Access-Control-Allow-Origin: *` across some 290,000 live recordings. Those
+alternative source paths remain under **Advanced** in the controls panel.
 
 ## Controls
 
 | Control | Key | What it does |
 | --- | --- | --- |
 | SEED | `r` | Refills the middle of the lattice at random |
-| PAUSE / PLAY | `space` | Stops and resumes |
+| PAUSE / PLAY | `space` | Stops and resumes the visualization |
 | STEP | `s` | Pauses, then advances one generation |
 | CLEAR | `c` | Empties the lattice |
+
+The **STATS** toggle lives in the controls panel with the visualization controls.
 
 On the lattice itself: **tap or click to re-seed**, **drag to rotate**, **pinch
 or scroll to zoom**. Camera panning is deliberately absent — it only ever slid
@@ -76,15 +86,18 @@ population collapses, so the toy is never empty when no audio is driving it.
 
 ## Layout
 
-One panel, collapsible everywhere, placed by orientation rather than by device:
-a rail on the right in landscape, a sheet at the bottom in portrait. The tab
-opens and closes it — tapping the lattice never does, since that re-seeds.
-Alongside the tab sit play/pause and a stats toggle; the HUD is off by default
-and trims to GEN, ALIVE and FPS on a narrow screen, where seven stats do not fit.
+One controls panel, collapsible everywhere, uses a right rail on a wide
+landscape PC and a bottom sheet on smaller layouts. Opening it reframes the
+visualization into the space that remains; tapping the lattice never toggles it,
+since taps re-seed. Pause/play and the stats toggle live inside this panel.
+The HUD is off by default and trims to GEN, ALIVE and FPS on a narrow screen,
+where seven stats do not fit.
 
 The panel starts open only where there is room (landscape, 900px or wider). On a
-phone it starts collapsed, leaving about 93% of the screen to the automaton
-against 37% before this pass.
+phone it starts collapsed. The Audius player is always available on a PC and is
+opened from its dedicated `MUSIC` dock button on mobile. The mobile player and
+controls sheets are mutually exclusive, and the player overlays rather than
+reframes the visualization.
 
 The camera fits and centres the lattice against the area the dock leaves, not
 the whole canvas. Fitting to lattice size alone cropped roughly 40% of the width
@@ -92,11 +105,11 @@ off a portrait phone; centring on the canvas left the lattice 28px low behind a
 55px dock. The canvas itself stays full-bleed, so the lattice still shows through
 the translucent panel.
 
-Only permanent chrome counts, so the lattice does not move when the panel opens
-over it, and the offset is fixed rather than tracking the cube's projected
-outline, so it does not drift while you rotate. That leaves the cube's visual
-mass reading a few pixels low — perspective puts the near-bottom corners further
-out than the far-top ones — which is the deliberate cost of never moving.
+The dock and an open controls panel count as chrome, so the lattice reframes into
+the space that remains. The offset is fixed rather than tracking the cube's
+projected outline, so it does not drift while you rotate. The floating Audius
+player is deliberately excluded from the camera inset, so opening it does not
+make the lattice jump while someone searches or scrubs.
 
 ## Rules
 

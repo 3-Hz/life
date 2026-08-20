@@ -22,8 +22,7 @@
                 <span class="chev" aria-hidden="true">▲</span>
                 <span class="tabLabel">CONTROLS</span>
             </button>
-            <button id="quickPause" aria-label="Pause or resume">❚❚</button>
-            <button id="hudToggle" aria-pressed="false" aria-controls="hud">STATS</button>
+            <button id="playerToggle" aria-expanded="false" aria-controls="audiusPlayer">MUSIC</button>
         </div>
 
         <header id="hud" hidden>
@@ -62,68 +61,54 @@
                     <button id="pause">PAUSE</button>
                     <button id="step">STEP</button>
                     <button id="clear">CLEAR</button>
+                    <button id="hudToggle" aria-pressed="false" aria-controls="hud">STATS</button>
                 </div>
                 <p class="hint">tap the lattice to re-seed · drag to rotate · pinch or scroll to zoom<br>space pauses · s steps · c clears · r re-seeds</p>
             </section>
 
             <section>
                 <h2>Audio</h2>
-                <div class="source-tabs" role="tablist" aria-label="Audio source">
-                    <button id="sourceTabStream" class="source-tab" data-source="stream" role="tab"
-                            aria-selected="false" aria-controls="sourcePanelStream" tabindex="-1">MUSIC</button>
-                    <button id="sourceTabSystem" class="source-tab" data-source="system" role="tab"
-                            aria-selected="false" aria-controls="sourcePanelSystem" tabindex="-1">SYSTEM</button>
-                    <button id="sourceTabMic" class="source-tab" data-source="mic" role="tab"
-                            aria-selected="false" aria-controls="sourcePanelMic" tabindex="-1">MIC</button>
-                    <button id="sourceTabFile" class="source-tab" data-source="file" role="tab"
-                            aria-selected="false" aria-controls="sourcePanelFile" tabindex="-1">FILE</button>
-                    <button id="sourceTabTone" class="source-tab" data-source="tone" role="tab"
-                            aria-selected="false" aria-controls="sourcePanelTone" tabindex="-1">TONE</button>
-                </div>
-
-                <div id="sourcePanelStream" class="source-panel" data-source-panel="stream" role="tabpanel"
-                     aria-labelledby="sourceTabStream" hidden>
-                    <div class="track">
-                        <input id="trackQuery" type="search" aria-label="Search Audius"
-                               placeholder="search Audius, or paste a link">
-                        <button id="trackSearch">FIND</button>
+                <p class="hint primary-audio-note">Audius is the primary source. Open MUSIC to search and play a track.</p>
+                <details id="advancedSources" class="advanced-sources">
+                    <summary>ADVANCED SOURCES</summary>
+                    <div class="source-tabs" role="tablist" aria-label="Advanced audio source">
+                        <button id="sourceTabSystem" class="source-tab" data-source="system" role="tab"
+                                aria-selected="false" aria-controls="sourcePanelSystem" tabindex="-1">SYSTEM</button>
+                        <button id="sourceTabMic" class="source-tab" data-source="mic" role="tab"
+                                aria-selected="false" aria-controls="sourcePanelMic" tabindex="-1">MIC</button>
+                        <button id="sourceTabFile" class="source-tab" data-source="file" role="tab"
+                                aria-selected="false" aria-controls="sourcePanelFile" tabindex="-1">FILE</button>
+                        <button id="sourceTabTone" class="source-tab" data-source="tone" role="tab"
+                                aria-selected="false" aria-controls="sourcePanelTone" tabindex="-1">TONE</button>
                     </div>
-                    <div id="nowPlaying" class="now-playing" hidden>
-                        <button id="trackToggle" aria-label="Pause">❚❚</button>
-                        <span id="nowPlayingTitle"></span>
+
+                    <div id="sourcePanelSystem" class="source-panel" data-source-panel="system" role="tabpanel"
+                         aria-labelledby="sourceTabSystem" hidden>
+                        <p class="hint">Share a screen or browser tab with audio — the way to reach Spotify or
+                            YouTube. The picker must include audio. Desktop only.</p>
+                        <button data-connect-source="system">CONNECT SYSTEM AUDIO</button>
                     </div>
-                    <ul id="trackResults" class="track-results"></ul>
-                    <p id="playerNote" class="hint"></p>
-                    <p class="hint">Audius streams into this page, so the lattice reads the audio directly — no
-                        permission prompt, and it works on a phone.</p>
-                </div>
 
-                <div id="sourcePanelSystem" class="source-panel" data-source-panel="system" role="tabpanel"
-                     aria-labelledby="sourceTabSystem" hidden>
-                    <p class="hint">Share a screen or browser tab with audio — the way to reach Spotify or
-                        YouTube. The picker must include audio. Desktop only.</p>
-                    <button data-connect-source="system">CONNECT SYSTEM AUDIO</button>
-                </div>
+                    <div id="sourcePanelMic" class="source-panel" data-source-panel="mic" role="tabpanel"
+                         aria-labelledby="sourceTabMic" hidden>
+                        <p class="hint">Use the microphone or a loopback device as the audio source.</p>
+                        <button data-connect-source="mic">CONNECT MICROPHONE</button>
+                    </div>
 
-                <div id="sourcePanelMic" class="source-panel" data-source-panel="mic" role="tabpanel"
-                     aria-labelledby="sourceTabMic" hidden>
-                    <p class="hint">Use the microphone or a loopback device as the audio source.</p>
-                    <button data-connect-source="mic">CONNECT MICROPHONE</button>
-                </div>
+                    <div id="sourcePanelFile" class="source-panel" data-source-panel="file" role="tabpanel"
+                         aria-labelledby="sourceTabFile" hidden>
+                        <label class="file">Choose an audio file
+                            <input id="fileInput" type="file" accept="audio/*">
+                        </label>
+                        <p class="hint">The file loops locally and does not require a permission prompt.</p>
+                    </div>
 
-                <div id="sourcePanelFile" class="source-panel" data-source-panel="file" role="tabpanel"
-                     aria-labelledby="sourceTabFile" hidden>
-                    <label class="file">Choose an audio file
-                        <input id="fileInput" type="file" accept="audio/*">
-                    </label>
-                    <p class="hint">The file loops locally and does not require a permission prompt.</p>
-                </div>
-
-                <div id="sourcePanelTone" class="source-panel" data-source-panel="tone" role="tabpanel"
-                     aria-labelledby="sourceTabTone" hidden>
-                    <p class="hint">Use a built-in tone to preview the visual reaction without another audio source.</p>
-                    <button data-connect-source="tone">START TEST TONE</button>
-                </div>
+                    <div id="sourcePanelTone" class="source-panel" data-source-panel="tone" role="tabpanel"
+                         aria-labelledby="sourceTabTone" hidden>
+                        <p class="hint">Use a built-in tone to preview the visual reaction without another audio source.</p>
+                        <button data-connect-source="tone">START TEST TONE</button>
+                    </div>
+                </details>
 
                 <p id="audioStatus" class="status">no audio source</p>
                 <label>Sensitivity <b id="sensitivityLabel">60</b>
@@ -131,6 +116,38 @@
                 </label>
             </section>
         </aside>
+
+        <section id="audiusPlayer" class="audius-player" aria-label="Audius player">
+            <div id="playerSearchArea" class="player-search-area" hidden>
+                <div class="track">
+                    <input id="trackQuery" type="search" aria-label="Search Audius"
+                           placeholder="search Audius, or paste a link">
+                    <button id="trackSearch">FIND</button>
+                </div>
+                <ul id="trackResults" class="track-results"></ul>
+                <p id="playerNote" class="hint"></p>
+            </div>
+            <div id="nowPlaying" class="now-playing">
+                <div class="now-playing-title">
+                    <button id="trackToggle" aria-label="Play" disabled>▶</button>
+                    <span id="nowPlayingTitle">no track selected</span>
+                    <button id="trackSearchToggle" class="player-search-toggle" type="button"
+                            aria-expanded="false" aria-controls="playerSearchArea"
+                            aria-label="Show Audius search" title="Show Audius search">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <circle cx="10.5" cy="10.5" r="6.5"></circle>
+                            <path d="m16 16 5 5"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="track-progress">
+                    <span id="trackElapsed">--:--</span>
+                    <input id="trackSeek" type="range" min="0" max="1" step="0.1" value="0"
+                           aria-label="Seek in track" disabled>
+                    <span id="trackDuration">--:--</span>
+                </div>
+            </div>
+        </section>
 
         <script type="module" src="./dist/main.js"></script>
     </body>

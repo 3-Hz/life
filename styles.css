@@ -14,6 +14,8 @@
     --dock-w: 6rem;        /* landscape: dock width */
     --panel-w: 23em;       /* landscape rail width */
     --panel-h: 68dvh;      /* portrait sheet height */
+    --visual-right: 0px;
+    --visual-bottom: 0px;
     --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
@@ -65,7 +67,7 @@ html, body {
 /*-------DOCK-------*/
 #dock {
     position: fixed;
-    z-index: 3;
+    z-index: 4;
     display: flex;
     gap: 0.4em;
     padding: 0.4em 0.6em;
@@ -165,8 +167,80 @@ html, body {
 .source-panel button { width: 100%; }
 .source-panel .track button { width: auto; }
 
-/*-------LANDSCAPE: a rail on the right, collapsing sideways-------*/
-@media (orientation: landscape) {
+/*-------AUDIUS PLAYER-------*/
+#audiusPlayer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7em;
+    padding: 0.9em;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 0.6em;
+    box-shadow: 0 0.5em 1.8em #0009;
+    backdrop-filter: blur(12px);
+    transition: transform 0.28s var(--ease), opacity 0.2s ease;
+}
+
+.player-search-toggle {
+    display: none;
+    flex: 0 0 2.4em;
+    width: 2.4em;
+    min-width: 2.4em;
+    max-width: 2.4em;
+    height: 2.4em;
+    min-height: 2.4em;
+    max-height: 2.4em;
+    aspect-ratio: 1;
+    padding: 0.45em;
+    margin-left: auto;
+    color: var(--accent);
+}
+
+.player-search-toggle svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2;
+}
+
+.player-search-area[hidden] { display: none; }
+
+#audiusPlayer .track { margin-bottom: 0; }
+#audiusPlayer .track button { width: auto; }
+
+.advanced-sources {
+    margin-top: 0.8em;
+    border: 1px solid var(--line);
+    border-radius: 0.5em;
+    background: #0d101b66;
+}
+
+.advanced-sources summary {
+    padding: 0.6em 0.8em;
+    color: var(--dim);
+    cursor: pointer;
+    letter-spacing: 0.08em;
+}
+
+.advanced-sources[open] summary {
+    color: var(--accent);
+    border-bottom: 1px solid var(--line);
+}
+
+.advanced-sources > .source-tabs,
+.advanced-sources > .source-panel {
+    margin-inline: 0.8em;
+}
+
+.advanced-sources > .source-tabs { margin-top: 0.7em; }
+.advanced-sources > .source-panel { margin-bottom: 0.8em; }
+
+/*-------DESKTOP: a rail on the right, collapsing sideways-------*/
+@media (min-width: 900px) and (orientation: landscape) {
     #dock {
         top: 0;
         right: 0;
@@ -194,10 +268,30 @@ html, body {
         padding-inline: 0;
     }
     #panelTab .tabLabel { display: none; }
+
+    #audiusPlayer {
+        position: fixed;
+        z-index: 2;
+        left: calc((100% - var(--visual-right)) / 2);
+        bottom: max(1em, env(safe-area-inset-bottom));
+        width: min(34rem, calc(100vw - var(--visual-right) - 2em));
+        max-height: min(55dvh, 34rem);
+        overflow-y: auto;
+        transform: translateX(-50%);
+    }
+
+    .player-search-toggle { display: grid; place-items: center; }
+
+    #playerToggle { display: none; }
+    body.player-closed #audiusPlayer {
+        transform: translateX(-50%);
+        opacity: 1;
+        pointer-events: auto;
+    }
 }
 
-/*-------PORTRAIT: a sheet at the bottom, collapsing downward-------*/
-@media (orientation: portrait) {
+/*-------MOBILE: sheets at the bottom, collapsing downward-------*/
+@media (max-width: 899px), (orientation: portrait) {
     #dock {
         bottom: 0;
         left: 0;
@@ -222,12 +316,30 @@ html, body {
     body.panel-closed #panelTab .chev { transform: rotate(0deg); }
     #panelTab .chev { transform: rotate(180deg); }
 
-    /* Seven stats do not fit 360px; the rest live on desktop and under ?perf. */
+    #audiusPlayer {
+        position: fixed;
+        z-index: 2;
+        left: 0;
+        right: 0;
+        bottom: var(--dock);
+        max-height: min(78dvh, 38rem);
+        overflow-y: auto;
+        border-radius: 0.6em 0.6em 0 0;
+        transform: translateY(0);
+    }
+
+    body.player-closed #audiusPlayer {
+        transform: translateY(calc(100% + var(--dock)));
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    /* Seven stats do not fit narrow layouts; the rest live on desktop and under ?perf. */
     #hud > span:not(.keep):not(#hudPerf) { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    #panel, #panelTab .chev { transition: none; }
+    #panel, #audiusPlayer, #panelTab .chev { transition: none; }
 }
 
 @media (max-width: 520px) {
@@ -335,25 +447,48 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .now-playing {
     display: flex;
-    gap: 0.6em;
-    align-items: center;
+    flex-direction: column;
+    gap: 0.45em;
     margin-bottom: 0.6em;
     color: var(--text);
 }
 
 .now-playing[hidden] { display: none; }
 
-/* The transport button is the exception to the panel's full-width buttons. */
-.source-panel .now-playing button {
+.now-playing-title {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    min-width: 0;
+}
+
+/* The transport button is the exception to the player's full-width controls. */
+#audiusPlayer .now-playing-title button:not(.player-search-toggle) {
     width: auto;
     flex: none;
     min-width: 2.6em;
 }
 
 #nowPlayingTitle {
+    flex: 1 1 auto;
+    min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+}
+
+.track-progress {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.6em;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.track-progress input[type="range"] {
+    width: 100%;
+    min-width: 0;
 }
 
 .status {
