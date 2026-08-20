@@ -139,6 +139,7 @@ class App {
 
     //-------AUDIO-------
     async selectSource(kind, payload) {
+        this.ui.setActiveSource(kind);
         try {
             this.ui.setAudioStatus(`connecting ${SOURCE_LABELS[kind]}...`);
             if (kind === SOURCES.SYSTEM) await this.audio.useDisplayMedia({ preferCurrentTab: false });
