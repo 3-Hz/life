@@ -149,6 +149,13 @@ const BACKGROUND = 0x07070c;
 const BOUNDS_COLOR = 0x2a3350;
 const BOUNDS_HOT = 0x6ad3ff;
 
+// Where the fog starts and ends, in lattice units either side of the camera's
+// own distance. The cube reaches a little under one unit each way from the
+// orbit target, so the haze opens just short of the near face and is still
+// short of full strength at the back corner.
+const FOG_NEAR = 0.37;
+const FOG_FAR = 2.53;
+
 interface Shock {
     x: number;
     y: number;
@@ -266,8 +273,8 @@ export class VoxelRenderer {
                 uEmissive: { value: 0.2 },
                 uBandGain: { value: 0 },
                 uExposure: { value: 1.35 },
-                uFogNear: { value: n * 1.6 },
-                uFogFar: { value: n * 4.5 },
+                uFogNear: { value: 0 }, // both set per frame, against camera distance
+                uFogFar: { value: 0 },
                 uAo: { value: 0.55 },
             },
         });
@@ -400,8 +407,6 @@ export class VoxelRenderer {
         this.n = n;
         this.material.uniforms.uHalf.value = (n - 1) / 2;
         this.material.uniforms.uSpan.value = Math.max(1, n - 1);
-        this.material.uniforms.uFogNear.value = n * 1.6;
-        this.material.uniforms.uFogFar.value = n * 4.5;
 
         this.buildMesh(n);
         this.rebuildBounds(n);
@@ -564,7 +569,23 @@ export class VoxelRenderer {
         return `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)},${this.camera.zoom.toFixed(4)}`;
     }
 
+    // Fog is a depth cue across the cube -- near faces bright, far ones receding
+    // -- not a measure of absolute distance, so the gradient travels with the
+    // camera. Pinned to the world, as it was, the far plane sat at a fixed n *
+    // 4.5 while the viewer could pull back to n * 5.9: past that plane every
+    // cell went fully to background colour and the lattice simply faded out.
+    //
+    // Cheaper to do here than to hook every way the camera can move -- damping,
+    // wheel, pinch, a resize that re-frames the lattice.
+    private updateFog(): void {
+        const distance = this.camera.position.length(); // orbit target is the origin
+        const uniforms = this.material.uniforms;
+        uniforms.uFogNear.value = distance - this.n * FOG_NEAR;
+        uniforms.uFogFar.value = distance + this.n * FOG_FAR;
+    }
+
     render(): void {
+        this.updateFog();
         this.renderer.render(this.scene, this.camera);
     }
 }
