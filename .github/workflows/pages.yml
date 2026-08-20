@@ -46,9 +46,17 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Build site
         run: bun run build
+      - name: Assemble Pages site
+        run: |
+          rm -rf _site
+          mkdir -p _site
+          cp index.html styles.css _site/
+          cp -R dist vendor _site/
+          test -s _site/dist/main.js
+          test -s _site/vendor/three.module.min.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: .
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
