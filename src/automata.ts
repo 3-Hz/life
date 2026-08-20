@@ -5,15 +5,32 @@
 
 const MAX_NEIGHBORS = 26;
 
+export interface Rule {
+    sMin: number;
+    sMax: number;
+    bMin: number;
+    bMax: number;
+}
+
+export interface RulePreset {
+    rule: string;
+    persists?: number;
+    label: string;
+    default?: boolean;
+    fragile?: boolean;
+}
+
+type Random = () => number;
+
 //-------RULES-------
 // Bays' four-digit notation: survival min/max, birth min/max. "4555" survives
 // on 4-5 neighbors and is born on exactly 5. Counts above 9 need the range
 // form ("4-5/5-5"), since a single digit cannot express them.
-export function parseRule(input) {
+export function parseRule(input: string): Rule {
     if (typeof input !== 'string') throw new TypeError('rule must be a string');
     const text = input.trim();
 
-    let parts;
+    let parts: [number, number, number, number];
     if (/^\d{4}$/.test(text)) {
         parts = [Number(text[0]), Number(text[1]), Number(text[2]), Number(text[3])];
     } else {
@@ -38,7 +55,7 @@ export function parseRule(input) {
 }
 
 // Round-trips through parseRule when every bound is a single digit.
-export function formatRule(rule) {
+export function formatRule(rule: Rule): string {
     const { sMin, sMax, bMin, bMax } = rule;
     if ([sMin, sMax, bMin, bMax].every((v) => v < 10)) return `${sMin}${sMax}${bMin}${bMax}`;
     return `S${sMin}-${sMax}/B${bMin}-${bMax}`;
@@ -55,7 +72,7 @@ export function formatRule(rule) {
 //
 // The UI builds the rule dropdown from this, and a test runs every entry, so
 // there is one list rather than two that can drift apart.
-export const RULE_PRESETS = [
+export const RULE_PRESETS: RulePreset[] = [
     { rule: 'S6-11/B4-4', persists: 91, label: 'breathing' },
     { rule: 'S6-14/B3-3', persists: 89, label: 'rippling' },
     { rule: '4733', persists: 76, label: 'lively', default: true },
@@ -71,7 +88,18 @@ export const RULE_PRESETS = [
 
 //-------LATTICE-------
 export class Lattice {
-    constructor(n, { wrap = true } = {}) {
+    n: number;
+    wrap: boolean;
+    size: number;
+    cells: Uint8Array;
+    next: Uint8Array;
+    age: Uint8Array;
+    counts: Uint8Array;
+    private _bufA: Uint8Array;
+    private _bufB: Uint8Array;
+    generation: number;
+
+    constructor(n: number, { wrap = true }: { wrap?: boolean } = {}) {
         if (!Number.isInteger(n) || n < 3) throw new Error('lattice size must be an integer >= 3');
         this.n = n;
         this.wrap = wrap;
@@ -89,16 +117,16 @@ export class Lattice {
         this.generation = 0;
     }
 
-    index(x, y, z) {
+    index(x: number, y: number, z: number): number {
         const n = this.n;
         return x + n * (y + n * z);
     }
 
-    get(x, y, z) {
+    get(x: number, y: number, z: number): number {
         return this.cells[this.index(x, y, z)];
     }
 
-    set(x, y, z, value) {
+    set(x: number, y: number, z: number, value: number | boolean): void {
         this.cells[this.index(x, y, z)] = value ? 1 : 0;
     }
 
@@ -114,7 +142,7 @@ export class Lattice {
         return this.next;
     }
 
-    clear() {
+    clear(): void {
         this.cells.fill(0);
         this.next.fill(0);
         this.age.fill(0);
@@ -122,7 +150,7 @@ export class Lattice {
         this.generation = 0;
     }
 
-    population() {
+    population(): number {
         let total = 0;
         for (let i = 0; i < this.size; i++) total += this.cells[i];
         return total;
@@ -130,7 +158,7 @@ export class Lattice {
 
     // Fills the lattice at random. Interior-biased so the first frame reads as a
     // cloud rather than a slab against the bounds.
-    seedRandom(density, rng, { margin = 0 } = {}) {
+    seedRandom(density: number, rng: Random, { margin = 0 }: { margin?: number } = {}): void {
         const n = this.n;
         this.clear();
         for (let z = margin; z < n - margin; z++) {
@@ -151,7 +179,7 @@ export class Lattice {
 
     // What a beat calls: scatter live cells through a sphere. Returns how many
     // cells it actually brought to life.
-    injectSphere(cx, cy, cz, radius, density, rng) {
+    injectSphere(cx: number, cy: number, cz: number, radius: number, density: number, rng: Random): number {
         const n = this.n;
         const r2 = radius * radius;
         const lo = Math.floor(-radius);
@@ -187,7 +215,7 @@ export class Lattice {
     // loads per cell with about six. At N=48 that is the difference between 2.9M
     // and 700k reads a tick. countNeighborsNaive below is the reference the
     // tests check this against.
-    computeCounts() {
+    computeCounts(): Uint8Array {
         const n = this.n;
         const wrap = this.wrap;
         const cells = this.cells;
@@ -245,7 +273,7 @@ export class Lattice {
 
     // Reference implementation. Correctness oracle for computeCounts, not used
     // in the render path.
-    countNeighborsNaive(x, y, z) {
+    countNeighborsNaive(x: number, y: number, z: number): number {
         const n = this.n;
         let neighbors = 0;
         for (let dz = -1; dz <= 1; dz++) {
@@ -280,7 +308,7 @@ export class Lattice {
     // already alive, which is how the density controller keeps a lattice from
     // packing solid. At the default it is not consulted at all, so the hot path
     // is unchanged for anyone not using it.
-    step(rule, { birthChance = 1, rng = null } = {}) {
+    step(rule: Rule, { birthChance = 1, rng = null }: { birthChance?: number; rng?: Random | null } = {}): number {
         const { sMin, sMax, bMin, bMax } = rule;
         const thin = birthChance < 1 && rng !== null;
         const n = this.n;
@@ -342,7 +370,7 @@ export class Lattice {
                 counts[idx] = c;
 
                 let on = was ? (c >= sMin && c <= sMax) : (c >= bMin && c <= bMax);
-                if (thin && on && !was && rng() >= birthChance) on = false;
+                if (thin && on && !was && rng!() >= birthChance) on = false;
                 next[idx] = on ? 1 : 0;
                 if (!on) age[idx] = 0;
                 else if (was) age[idx] = age[idx] < 255 ? age[idx] + 1 : 255;

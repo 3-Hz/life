@@ -1,6 +1,6 @@
 // Small seeded PRNG (mulberry32). Seeding keeps runs reproducible when audio
 // influence is dialed to zero, which is what the determinism test relies on.
-export function mulberry32(seed) {
+export function mulberry32(seed: number): () => number {
     let a = seed >>> 0;
     return function () {
         a = (a + 0x6D2B79F5) | 0;

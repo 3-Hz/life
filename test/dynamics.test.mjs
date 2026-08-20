@@ -3,7 +3,7 @@
 // nowhere else.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AdaptiveRange, Envelope, OnsetDetector, rate, smoothstep } from '../src/dynamics.js';
+import { AdaptiveRange, Envelope, OnsetDetector, rate, smoothstep } from '../dist/dynamics.js';
 
 const FRAME = 1 / 60;
 

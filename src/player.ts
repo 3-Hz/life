@@ -8,16 +8,21 @@
 const API_URL = 'https://w.soundcloud.com/player/api.js';
 const DEFAULT_TRACK = 'https://soundcloud.com/soundcloud/sets/soundcloud-weekly';
 
-let apiPromise = null;
+let apiPromise: Promise<SoundCloudNamespace> | null = null;
 
-function loadWidgetApi() {
+function loadWidgetApi(): Promise<SoundCloudNamespace> {
     if (apiPromise) return apiPromise;
-    apiPromise = new Promise((resolve, reject) => {
-        if (window.SC?.Widget) return resolve(window.SC);
+    apiPromise = new Promise<SoundCloudNamespace>((resolve, reject) => {
+        const sc = window.SC;
+        if (sc?.Widget) return resolve(sc);
         const script = document.createElement('script');
         script.src = API_URL;
         script.async = true;
-        script.onload = () => (window.SC?.Widget ? resolve(window.SC) : reject(new Error('widget API loaded but empty')));
+        script.onload = () => {
+            const loaded = window.SC;
+            if (loaded?.Widget) resolve(loaded);
+            else reject(new Error('widget API loaded but empty'));
+        };
         script.onerror = () => reject(new Error('could not reach w.soundcloud.com'));
         document.head.appendChild(script);
     });
@@ -25,7 +30,15 @@ function loadWidgetApi() {
 }
 
 export class SoundCloudPlayer {
-    constructor(iframe) {
+    iframe: HTMLIFrameElement;
+    widget: SoundCloudWidget | null;
+    available: boolean;
+    error: string | null;
+    playing: boolean;
+    title: string;
+    onStateChange: (player: SoundCloudPlayer) => void;
+
+    constructor(iframe: HTMLIFrameElement) {
         this.iframe = iframe;
         this.widget = null;
         this.available = false;
@@ -37,22 +50,23 @@ export class SoundCloudPlayer {
 
     // Resolves false rather than throwing when SoundCloud is unreachable: this
     // one source disables itself, the other four keep working.
-    async init(trackUrl = DEFAULT_TRACK) {
+    async init(trackUrl: string = DEFAULT_TRACK): Promise<boolean> {
+        let api: SoundCloudNamespace;
         try {
-            await loadWidgetApi();
+            api = await loadWidgetApi();
         } catch (err) {
-            this.error = err.message;
+            this.error = err instanceof Error ? err.message : String(err);
             this.available = false;
             return false;
         }
 
         this.iframe.src = widgetUrl(trackUrl);
-        this.widget = window.SC.Widget(this.iframe);
+        this.widget = api.Widget(this.iframe);
 
-        const Events = window.SC.Widget.Events;
+        const Events = api.Widget.Events;
         this.widget.bind(Events.READY, () => {
             this.available = true;
-            this.widget.getCurrentSound((sound) => {
+            this.widget!.getCurrentSound((sound) => {
                 this.title = sound?.title ?? '';
                 this.onStateChange(this);
             });
@@ -74,13 +88,13 @@ export class SoundCloudPlayer {
         return true;
     }
 
-    load(trackUrl) {
+    load(trackUrl: string): void {
         if (!this.widget) return;
         this.widget.load(trackUrl, {
             auto_play: true,
             show_artwork: true,
             callback: () => {
-                this.widget.getCurrentSound((sound) => {
+                this.widget!.getCurrentSound((sound) => {
                     this.title = sound?.title ?? '';
                     this.onStateChange(this);
                 });
@@ -88,11 +102,11 @@ export class SoundCloudPlayer {
         });
     }
 
-    play() { this.widget?.play(); }
-    pause() { this.widget?.pause(); }
+    play(): void { this.widget?.play(); }
+    pause(): void { this.widget?.pause(); }
 }
 
-function widgetUrl(trackUrl) {
+function widgetUrl(trackUrl: string): string {
     const params = new URLSearchParams({
         url: trackUrl,
         auto_play: 'false',

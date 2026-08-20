@@ -1,8 +1,8 @@
-// Zero-dependency tests: node --test test/
+// The Bun test script builds the TypeScript modules before running these tests.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Lattice, parseRule, formatRule, RULE_PRESETS } from '../src/automata.js';
-import { mulberry32 } from '../src/rng.js';
+import { Lattice, parseRule, formatRule, RULE_PRESETS } from '../dist/automata.js';
+import { mulberry32 } from '../dist/rng.js';
 
 function randomLattice(n, wrap, seed, density = 0.3) {
     const lattice = new Lattice(n, { wrap });
@@ -219,8 +219,8 @@ test('malformed rules throw', () => {
 // real thing.
 test('every shipped preset stays alive and in range from the app\'s own seeding', () => {
     const N = 48;
-    const SEED_DENSITY = 0.18;          // must mirror main.js
-    const MARGIN = Math.floor(N / 4);   // must mirror main.js
+    const SEED_DENSITY = 0.18;          // must mirror main.ts
+    const MARGIN = Math.floor(N / 4);   // must mirror main.ts
 
     for (const preset of RULE_PRESETS) {
         if (preset.fragile) continue;   // Bays' classics need beats, by design

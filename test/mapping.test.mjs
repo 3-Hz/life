@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     mapToSim, mapToVisual, shiftBirth, densityControl, NO_DENSITY, TUNING,
-} from '../src/mapping.js';
-import { parseRule } from '../src/automata.js';
+} from '../dist/mapping.js';
+import { parseRule } from '../dist/automata.js';
 
 // Centroid 0.5 is "no opinion": it is where a signal with nothing to say sits,
 // and it is what the engine reports when no audio is connected.

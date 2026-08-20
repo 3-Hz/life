@@ -2,8 +2,62 @@
 // nowhere else. Zero the sensitivity and the simulation is deterministic again.
 //
 // The features arriving here are already normalized against the signal's own
-// recent range (see src/dynamics.js), so these curves shape a 0-1 input that
+// recent range (see src/dynamics.ts), so these curves shape a 0-1 input that
 // genuinely uses 0-1, rather than one that pins at its ceiling on the first bar.
+
+import type { Rule } from './automata.js';
+
+export interface AudioFeatures {
+    bass: number;
+    mid: number;
+    treble: number;
+    level: number;
+    centroid: number;
+    flux: number;
+    beat: boolean;
+    beatStrength: number;
+    pulse: number;
+    bands?: Float32Array | null;
+}
+
+export interface MappingTargets {
+    tickRate: boolean;
+    burst: boolean;
+    birthShift: boolean;
+    color: boolean;
+    scale: boolean;
+    camera: boolean;
+}
+
+export interface DensityControl {
+    burstScale: number;
+    birthChance: number;
+    relief: number;
+}
+
+export interface SimulationMapping {
+    tickRate: number;
+    birthShift: number;
+    burst: Burst | null;
+    birthChance: number;
+}
+
+export interface Burst {
+    radius: number;
+    density: number;
+    height: number;
+}
+
+export interface VisualMapping {
+    hueShift: number;
+    tintSat: number;
+    emissive: number;
+    bandGain: number;
+    voxelScale: number;
+    dolly: number;
+    pulse: number;
+    bands: Float32Array | null;
+}
 
 export const TUNING = {
     tickRate: { min: 2, max: 60 },
@@ -59,8 +113,8 @@ export const TARGETS = {
 // for every caller that does not care about it.
 export const NO_DENSITY = { burstScale: 1, birthChance: 1, relief: 0 };
 
-const lerp = (a, b, t) => a + (b - a) * t;
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 // How full the lattice is -> how hard to push back.
 //
@@ -73,7 +127,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 // shifting a birth window adds or removes cells depends on the local neighbor
 // count, so it fights back in exactly the crowded regions this is meant to open
 // up; a birth roll works the same way under every rule.
-export function densityControl(fill, enabled = true, tuning = TUNING.density) {
+export function densityControl(fill: number, enabled = true, tuning = TUNING.density): DensityControl {
     if (!enabled) return NO_DENSITY;
     // 0 at the target, 1 at the top of the band, and negative below it.
     const over = (fill - tuning.target) / tuning.band;
@@ -86,7 +140,12 @@ export function densityControl(fill, enabled = true, tuning = TUNING.density) {
 }
 
 // Audio -> what the simulation does.
-export function mapToSim(features, sensitivity, targets = TARGETS, density = NO_DENSITY) {
+export function mapToSim(
+    features: AudioFeatures,
+    sensitivity: number,
+    targets: MappingTargets = TARGETS,
+    density: DensityControl = NO_DENSITY,
+): SimulationMapping {
     const s = clamp(sensitivity, 0, 1);
     const energy = lerp(features.level, features.flux ?? 0, TUNING.fluxWeight) * s;
 
@@ -116,7 +175,12 @@ export function mapToSim(features, sensitivity, targets = TARGETS, density = NO_
 }
 
 // Audio -> how it looks.
-export function mapToVisual(features, sensitivity, targets = TARGETS, density = NO_DENSITY) {
+export function mapToVisual(
+    features: AudioFeatures,
+    sensitivity: number,
+    targets: MappingTargets = TARGETS,
+    density: DensityControl = NO_DENSITY,
+): VisualMapping {
     const s = clamp(sensitivity, 0, 1);
     const pulse = (features.pulse ?? 0) * s;
 
@@ -153,7 +217,7 @@ export function mapToVisual(features, sensitivity, targets = TARGETS, density = 
 }
 
 // Applies the centroid's nudge without letting the window invert or leave 0-26.
-export function shiftBirth(rule, shift) {
+export function shiftBirth(rule: Rule, shift: number): Rule {
     if (!shift) return rule;
     const bMin = clamp(rule.bMin + shift, 0, 26);
     const bMax = clamp(rule.bMax + shift, 0, 26);

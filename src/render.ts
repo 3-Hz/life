@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
+import type { Lattice } from './automata.js';
+import type { VisualMapping } from './mapping.js';
 
 // Live cells are drawn as one instanced draw call. Per tick the CPU writes five
 // bytes per live cell -- lattice coordinate, age, neighbor count -- and nothing
@@ -147,8 +149,58 @@ const BACKGROUND = 0x07070c;
 const BOUNDS_COLOR = 0x2a3350;
 const BOUNDS_HOT = 0x6ad3ff;
 
+interface Shock {
+    x: number;
+    y: number;
+    z: number;
+    age: number;
+    strength: number;
+}
+
+interface Insets {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+}
+
+interface FreeRect {
+    width: number;
+    height: number;
+    w: number;
+    h: number;
+    cx: number;
+    cy: number;
+}
+
 export class VoxelRenderer {
-    constructor(canvas, n, { mobile = false } = {}) {
+    canvas: HTMLCanvasElement;
+    n: number;
+    mobile: boolean;
+    renderer: any;
+    maxPixelRatio: number;
+    pixelRatio: number;
+    scene: any;
+    camera: any;
+    controls: any;
+    shocks: Shock[];
+    shockSpeed: number;
+    shockLife: number;
+    material: any = null;
+    cellData!: Uint8Array;
+    stateData!: Uint8Array;
+    cellAttribute: any;
+    stateAttribute: any;
+    mesh: any;
+    spectrumTexture: any = null;
+    spectrumData!: Uint8Array;
+    boundsBase: any;
+    boundsHot: any;
+    bounds: any = null;
+    drawn: number;
+    insets: Insets;
+
+    constructor(canvas: HTMLCanvasElement, n: number, { mobile = false }: { mobile?: boolean } = {}) {
         this.canvas = canvas;
         this.n = n;
         this.mobile = mobile;
@@ -181,7 +233,7 @@ export class VoxelRenderer {
         this.buildSpectrum(32);
         // Live shockwaves. A spent one keeps its slot with zero gain, which
         // costs the shader the same as an occupied one and saves the branch.
-        this.shocks = Array.from({ length: SHOCKS }, () => ({ age: Infinity, strength: 0 }));
+        this.shocks = Array.from({ length: SHOCKS }, () => ({ x: 0, y: 0, z: 0, age: Infinity, strength: 0 }));
         // Fast enough to reach the outside of the lattice while it still has
         // most of its strength. A shell is only ever seen through the cells in
         // front of it, so the half of its life spent deep in the middle is the
@@ -236,7 +288,7 @@ export class VoxelRenderer {
     }
 
     //-------GEOMETRY-------
-    buildMesh(n) {
+    private buildMesh(n: number): void {
         const capacity = n * n * n;
         this.cellData = new Uint8Array(capacity * 4); // x, y, z, age
         this.stateData = new Uint8Array(capacity * 2); // live neighbors, state
@@ -262,7 +314,7 @@ export class VoxelRenderer {
 
     // One texel per analysis band. The shader samples it by height, so linear
     // filtering is what blends one band into the next up the lattice.
-    buildSpectrum(bands) {
+    private buildSpectrum(bands: number): void {
         if (this.spectrumTexture) this.spectrumTexture.dispose();
         this.spectrumData = new Uint8Array(bands);
         this.spectrumTexture = new THREE.DataTexture(this.spectrumData, bands, 1, THREE.RedFormat);
@@ -279,15 +331,15 @@ export class VoxelRenderer {
     // The rectangle the viewer can actually see: the canvas minus permanent
     // chrome. Everything about framing and centring is expressed against this
     // rather than against the canvas.
-    freeRect(width = this.canvas.clientWidth || window.innerWidth,
-             height = this.canvas.clientHeight || window.innerHeight) {
+    private freeRect(width = this.canvas.clientWidth || window.innerWidth,
+                     height = this.canvas.clientHeight || window.innerHeight): FreeRect {
         const { top, right, bottom, left } = this.insets;
         const w = Math.max(1, width - left - right);
         const h = Math.max(1, height - top - bottom);
         return { width, height, w, h, cx: left + w / 2, cy: top + h / 2 };
     }
 
-    setChromeInsets({ top = 0, right = 0, bottom = 0, left = 0 } = {}) {
+    setChromeInsets({ top = 0, right = 0, bottom = 0, left = 0 }: Partial<Insets> = {}): void {
         this.insets = { top, right, bottom, left };
         this.resize();
     }
@@ -300,7 +352,7 @@ export class VoxelRenderer {
     // This deliberately ignores the panel, even when open: the offset then
     // depends only on permanent chrome, so nothing slides when the panel is
     // toggled, and nothing drifts while the lattice is being rotated.
-    applyViewOffset(free) {
+    private applyViewOffset(free: FreeRect): void {
         this.camera.setViewOffset(
             free.width, free.height,
             free.width / 2 - free.cx,
@@ -313,7 +365,7 @@ export class VoxelRenderer {
     // rectangle is narrower. Deriving it from lattice size alone -- as this once
     // did -- crops badly on a tall narrow screen: at a 0.46 aspect the cube
     // projected well outside the frame on both sides.
-    frameLattice(free) {
+    private frameLattice(free: FreeRect): void {
         const radius = this.n * Math.sqrt(3) / 2; // corner-to-centre of the cube
         const vFov = THREE.MathUtils.degToRad(this.camera.fov);
         // The free rect subtends a smaller angle than the whole canvas; both of
@@ -327,7 +379,7 @@ export class VoxelRenderer {
         this.controls.maxDistance = distance * 3;
     }
 
-    rebuildBounds(n) {
+    private rebuildBounds(n: number): void {
         if (this.bounds) {
             this.scene.remove(this.bounds);
             this.bounds.geometry.dispose();
@@ -340,7 +392,7 @@ export class VoxelRenderer {
         this.scene.add(this.bounds);
     }
 
-    setLatticeSize(n) {
+    setLatticeSize(n: number): void {
         if (n === this.n) return;
         this.scene.remove(this.mesh);
         this.mesh.geometry.dispose();
@@ -355,7 +407,7 @@ export class VoxelRenderer {
         this.rebuildBounds(n);
     }
 
-    setPixelRatio(ratio) {
+    setPixelRatio(ratio: number): void {
         const clamped = Math.min(ratio, this.maxPixelRatio);
         if (clamped === this.pixelRatio) return;
         this.pixelRatio = clamped;
@@ -372,7 +424,7 @@ export class VoxelRenderer {
     // shrink them away rather than blinking them out. That costs extra instances
     // in proportion to churn: about +12% on a rule that replaces a quarter of
     // itself each step, and nearly double on one that replaces everything.
-    syncLattice(lattice) {
+    syncLattice(lattice: Lattice): void {
         const n = lattice.n;
         const cells = lattice.cells;
         const previous = lattice.previous;
@@ -419,14 +471,14 @@ export class VoxelRenderer {
 
     // Progress toward the next generation, so births and deaths animate across
     // the gap rather than snapping at the moment of the step.
-    setPhase(phase) {
+    setPhase(phase: number): void {
         this.material.uniforms.uPhase.value = phase;
     }
 
     //-------SHOCKWAVES-------
     // Started wherever a beat's burst lands, so the shell and the cells it
     // brought to life share an origin.
-    spawnShock(x, y, z, strength) {
+    spawnShock(x: number, y: number, z: number, strength: number): void {
         // Take the most spent slot, so a new hit never cuts short a shell that
         // is younger than the alternative.
         let slot = this.shocks[0];
@@ -438,7 +490,7 @@ export class VoxelRenderer {
         slot.strength = strength;
     }
 
-    updateShocks(dt) {
+    updateShocks(dt: number): void {
         const uShock = this.material.uniforms.uShock.value;
         const uGain = this.material.uniforms.uShockGain.value;
         for (let i = 0; i < SHOCKS; i++) {
@@ -461,7 +513,7 @@ export class VoxelRenderer {
     //-------PER-FRAME-------
     // Uniforms only. Voxel scale used to be baked into every instance matrix,
     // which meant the audio reaction forced a full rebuild; now it is one float.
-    applyVisual(visual) {
+    applyVisual(visual: VisualMapping): void {
         const uniforms = this.material.uniforms;
         uniforms.uScale.value = visual.voxelScale;
         uniforms.uEmissive.value = visual.emissive;
@@ -470,7 +522,7 @@ export class VoxelRenderer {
         // the shift can go either way around it.
         uniforms.uTint.value.setHSL((1.55 + visual.hueShift) % 1, visual.tintSat ?? 0.25, 0.72);
         this.setSpectrum(visual.bands);
-        this.bounds.material.color.copy(this.boundsBase).lerp(this.boundsHot, visual.pulse ?? 0);
+        this.bounds!.material.color.copy(this.boundsBase).lerp(this.boundsHot, visual.pulse ?? 0);
 
         const zoom = 1 + visual.dolly;
         if (this.camera.zoom !== zoom) {
@@ -479,7 +531,7 @@ export class VoxelRenderer {
         }
     }
 
-    setSpectrum(bands) {
+    private setSpectrum(bands: Float32Array | null): void {
         if (!bands) return;
         if (bands.length !== this.spectrumData.length) this.buildSpectrum(bands.length);
         const data = this.spectrumData;
@@ -489,7 +541,7 @@ export class VoxelRenderer {
         this.spectrumTexture.needsUpdate = true;
     }
 
-    resize() {
+    resize(): void {
         const width = this.canvas.clientWidth || window.innerWidth;
         const height = this.canvas.clientHeight || window.innerHeight;
         this.renderer.setSize(width, height, false);
@@ -501,18 +553,18 @@ export class VoxelRenderer {
 
     // Reports whether the camera is still settling, so the loop can skip draws
     // once everything has come to rest.
-    updateControls() {
+    updateControls(): boolean {
         const before = this._cameraKey();
         this.controls.update();
         return before !== this._cameraKey();
     }
 
-    _cameraKey() {
+    private _cameraKey(): string {
         const p = this.camera.position;
         return `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)},${this.camera.zoom.toFixed(4)}`;
     }
 
-    render() {
+    render(): void {
         this.renderer.render(this.scene, this.camera);
     }
 }
