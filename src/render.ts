@@ -349,9 +349,9 @@ export class VoxelRenderer {
     // middle of the visible area instead of the middle of the canvas. Centring
     // on the canvas put the lattice 28px low behind a 55px dock.
     //
-    // This deliberately ignores the panel, even when open: the offset then
-    // depends only on permanent chrome, so nothing slides when the panel is
-    // toggled, and nothing drifts while the lattice is being rotated.
+    // The UI supplies insets for permanent chrome and any open controls panel.
+    // Floating player surfaces are intentionally excluded, so they do not make
+    // the lattice jump while someone is searching or scrubbing a track.
     private applyViewOffset(free: FreeRect): void {
         this.camera.setViewOffset(
             free.width, free.height,
