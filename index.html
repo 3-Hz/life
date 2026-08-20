@@ -100,7 +100,13 @@
                     <div id="sourcePanelFile" class="source-panel" data-source-panel="file" role="tabpanel"
                          aria-labelledby="sourceTabFile" hidden>
                         <label class="file">Choose an audio file
-                            <input id="fileInput" type="file" accept="audio/*">
+                            <!-- Extensions as well as the wildcard. A picker that
+                                 cannot map an extension to an audio MIME type greys
+                                 the file out, and .wav is the usual casualty: it is
+                                 audio/wav, audio/x-wav, audio/wave or audio/vnd.wave
+                                 depending on who is asked. -->
+                            <input id="fileInput" type="file"
+                                   accept="audio/*,.wav,.wave,.aif,.aiff,.flac,.m4a,.aac,.mp3,.ogg,.oga,.opus,.caf,.wma">
                         </label>
                         <p class="hint">The file loops locally and does not require a permission prompt.</p>
                     </div>

@@ -17,7 +17,7 @@ interface UiApp {
     audius: { search(query: string): Promise<AudiusTrack[]> };
     // The element itself, because owning it is the whole point: transport
     // controls are a property set away, where a widget needed a message.
-    audio: { element: HTMLAudioElement | null };
+    audio: { element: HTMLAudioElement | null; ensureContext(): Promise<AudioContext> };
     playTrack(track: AudiusTrack, queue?: AudiusTrack[]): Promise<void>;
     seed(): void;
     clear(): void;
@@ -571,6 +571,15 @@ export function bindUI(app: UiApp): UiBinding {
         if (!element || !Number.isFinite(element.duration)) return;
         element.currentTime = Number(els.trackSeek.value);
         syncTrackProgress();
+    });
+
+    // Opening the picker is a real user gesture. The change event that follows
+    // it is not one on iOS, and an audio context woken without a gesture there
+    // answers with a promise that never settles -- which is what left picking a
+    // file stuck on "connecting". So the gesture that does exist gets spent
+    // here, and by the time a file arrives there is nothing left to wake.
+    els.fileInput.addEventListener('click', () => {
+        app.audio.ensureContext().catch(() => { /* the connect below reports it */ });
     });
 
     els.fileInput.addEventListener('change', () => {
