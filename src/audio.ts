@@ -59,6 +59,28 @@ const DB_REF = -85;
 const GATE_LO_DB = -72;
 const GATE_HI_DB = -46;
 
+// Safari answers resume() with a promise that never settles when the page has no
+// user activation left to spend, and a file input's change event is not one on
+// iOS -- so picking a file wedged the connect behind an await that never
+// returned, and the status sat on "connecting" for good. Every other source
+// starts from a button, which is why only the file path showed it. Waiting a
+// bounded time turns a wedge into something the panel can say out loud.
+const WAKE_TIMEOUT_MS = 3000;
+const PLAY_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(message)), ms);
+        work.then((value) => {
+            clearTimeout(timer);
+            resolve(value);
+        }, (error) => {
+            clearTimeout(timer);
+            reject(error);
+        });
+    });
+}
+
 // A frame that arrives after the tab was backgrounded should not flush every
 // running average, and a zero-length one must not divide anything.
 const DT_MIN = 1 / 240;
@@ -144,7 +166,10 @@ export class AudioEngine {
             this.time = new Uint8Array(this.analyser.fftSize);
             this._buildBands();
         }
-        if (this.ctx.state === 'suspended') await this.ctx.resume();
+        if (this.ctx.state === 'suspended') {
+            await withTimeout(this.ctx.resume(), WAKE_TIMEOUT_MS,
+                'the browser is holding audio until you tap the page — tap it, then try again');
+        }
         return this.ctx;
     }
 
@@ -263,7 +288,21 @@ export class AudioEngine {
         this.source = this.ctx!.createMediaElementSource(element);
         this.source.connect(this.analyser!);
         this.source.connect(this.ctx!.destination); // this one we do want to hear
-        await element.play();
+        // A codec the browser cannot decode fails on the element rather than on
+        // play(), so without this a bad file leaves the panel claiming to be
+        // listening to silence.
+        const failed = new Promise<never>((_, reject) => {
+            element.addEventListener('error', () => {
+                const code = element.error?.code;
+                reject(new Error(code === 4 || code === 3
+                    ? `${file.name} is not a format this browser can decode`
+                    : `${file.name} could not be read`));
+            }, { once: true });
+        });
+        await Promise.race([
+            withTimeout(element.play(), PLAY_TIMEOUT_MS, 'the file never started playing'),
+            failed,
+        ]);
         this.sourceKind = SOURCES.FILE;
         return SOURCES.FILE;
     }
