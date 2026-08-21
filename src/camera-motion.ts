@@ -7,10 +7,9 @@ export interface CameraMotionOffset {
 }
 
 export const CAMERA_MOTION = {
-    yawAmplitude: 0.14,
     pitchAmplitude: 0.07,
-    yawPeriod: 22,
-    pitchPeriod: 31,
+    rotationPeriod: 12,
+    pitchCyclesPerRotation: 1,
 };
 
 const TWO_PI = Math.PI * 2;
@@ -18,7 +17,11 @@ const TWO_PI = Math.PI * 2;
 export function sampleCameraMotion(seconds: number): CameraMotionOffset {
     const elapsed = Math.max(0, seconds);
     return {
-        yaw: CAMERA_MOTION.yawAmplitude * Math.sin(TWO_PI * elapsed / CAMERA_MOTION.yawPeriod),
-        pitch: CAMERA_MOTION.pitchAmplitude * Math.sin(TWO_PI * elapsed / CAMERA_MOTION.pitchPeriod),
+        // Keep yaw unwrapped so the renderer can apply a constant forward
+        // delta across the 2π boundary instead of jumping back to zero.
+        yaw: TWO_PI * elapsed / CAMERA_MOTION.rotationPeriod,
+        pitch: CAMERA_MOTION.pitchAmplitude * Math.sin(
+            TWO_PI * elapsed * CAMERA_MOTION.pitchCyclesPerRotation / CAMERA_MOTION.rotationPeriod,
+        ),
     };
 }
