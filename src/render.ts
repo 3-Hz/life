@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 import type { Lattice } from './automata.js';
 import type { VisualMapping } from './mapping.js';
+import { sampleCameraMotion } from './camera-motion.js';
 
 // Live cells are drawn as one instanced draw call. Per tick the CPU writes five
 // bytes per live cell -- lattice coordinate, age, neighbor count -- and nothing
@@ -15,6 +16,7 @@ import type { VisualMapping } from './mapping.js';
 // Concurrent shockwaves. Three is enough that a fast passage overlaps rather
 // than cutting one shell off to start the next.
 const SHOCKS = 3;
+const CAMERA_RESUME_DELAY = 2;
 
 const VERTEX_SHADER = /* glsl */ `
     attribute vec4 aCell;  // xyz = lattice coordinate, w = age
@@ -199,6 +201,11 @@ export class VoxelRenderer {
     bounds: any = null;
     drawn: number;
     insets: Insets;
+    autoRotation: boolean;
+    private _cameraInteraction: boolean;
+    private _cameraResumeIn: number;
+    private _motionTime: number;
+    private _motionOffset: { yaw: number; pitch: number };
 
     constructor(canvas: HTMLCanvasElement, n: number, { mobile = false }: { mobile?: boolean } = {}) {
         this.canvas = canvas;
@@ -229,6 +236,19 @@ export class VoxelRenderer {
         // the one camera gesture that only ever gets in the way here. Rotate
         // (one finger, left drag) and zoom (pinch, wheel) stay.
         this.controls.enablePan = false;
+        this.autoRotation = true;
+        this._cameraInteraction = false;
+        this._cameraResumeIn = 0;
+        this._motionTime = 0;
+        this._motionOffset = sampleCameraMotion(0);
+        this.controls.addEventListener('start', () => {
+            this._cameraInteraction = true;
+            this._cameraResumeIn = 0;
+        });
+        this.controls.addEventListener('end', () => {
+            this._cameraInteraction = false;
+            this._cameraResumeIn = CAMERA_RESUME_DELAY;
+        });
 
         this.buildSpectrum(32);
         // Live shockwaves. A spent one keeps its slot with zero gain, which
@@ -415,6 +435,16 @@ export class VoxelRenderer {
         this.resize();
     }
 
+    setAutoRotation(enabled: boolean): void {
+        if (this.autoRotation === enabled) return;
+        this.autoRotation = enabled;
+        // Start a new waveform from the user's current orientation. Applying
+        // only future deltas avoids snapping back to an old automatic pose.
+        this._motionTime = 0;
+        this._motionOffset = sampleCameraMotion(0);
+        this._cameraResumeIn = 0;
+    }
+
     //-------PER-TICK-------
     // The whole per-cell cost of a tick: six bytes each, no matrices, no color
     // conversion. Cells with all 26 neighbors alive are skipped -- they cannot
@@ -553,9 +583,20 @@ export class VoxelRenderer {
 
     // Reports whether the camera is still settling, so the loop can skip draws
     // once everything has come to rest.
-    updateControls(): boolean {
+    updateControls(dt: number): boolean {
         const before = this._cameraKey();
-        this.controls.update();
+        if (this.autoRotation && !this._cameraInteraction) {
+            if (this._cameraResumeIn > 0) {
+                this._cameraResumeIn = Math.max(0, this._cameraResumeIn - Math.max(0, dt));
+            } else {
+                this._motionTime += Math.max(0, dt);
+                const next = sampleCameraMotion(this._motionTime);
+                this.controls.rotateLeft(next.yaw - this._motionOffset.yaw);
+                this.controls.rotateUp(next.pitch - this._motionOffset.pitch);
+                this._motionOffset = next;
+            }
+        }
+        this.controls.update(dt);
         return before !== this._cameraKey();
     }
 
