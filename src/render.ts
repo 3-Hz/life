@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 import type { Lattice } from './automata.js';
 import type { VisualMapping } from './mapping.js';
-import { sampleCameraMotion } from './camera-motion.js';
+import { CAMERA_MOTION, cameraElevation, sampleCameraMotion } from './camera-motion.js';
 
 // Live cells are drawn as one instanced draw call. Per tick the CPU writes five
 // bytes per live cell -- lattice coordinate, age, neighbor count -- and nothing
@@ -206,8 +206,9 @@ export class VoxelRenderer {
     private _cameraResumeIn: number;
     private _motionTime: number;
     private _motionRadius: number;
-    private _motionPhi: number;
     private _motionTheta: number;
+    private _motionRecenterFromPhi: number;
+    private _motionRecenterRemaining: number;
     private _motionPosition: any;
 
     constructor(canvas: HTMLCanvasElement, n: number, { mobile = false }: { mobile?: boolean } = {}) {
@@ -244,8 +245,9 @@ export class VoxelRenderer {
         this._cameraResumeIn = 0;
         this._motionTime = 0;
         this._motionRadius = 0;
-        this._motionPhi = 0;
         this._motionTheta = 0;
+        this._motionRecenterFromPhi = Math.PI / 2 - CAMERA_MOTION.baselineElevation;
+        this._motionRecenterRemaining = 0;
         this._motionPosition = new THREE.Vector3();
         this.controls.addEventListener('start', () => {
             this._cameraInteraction = true;
@@ -443,9 +445,10 @@ export class VoxelRenderer {
 
     setAutoRotation(enabled: boolean): void {
         if (this.autoRotation === enabled) return;
-        if (enabled) this._captureMotionAnchor();
         this.autoRotation = enabled;
         this._cameraResumeIn = 0;
+        if (enabled) this._beginMotionRecenter();
+        else this._motionRecenterRemaining = 0;
     }
 
     //-------PER-TICK-------
@@ -582,8 +585,8 @@ export class VoxelRenderer {
         const free = this.freeRect(width, height);
         this.applyViewOffset(free); // also updates the projection matrix
         this.frameLattice(free);
-        // Framing changes the camera radius; keep automatic motion anchored to
-        // the newly fitted pose so a panel or resize cannot cause a snap.
+        // Framing changes the camera radius; keep the orbit's yaw anchored to
+        // the newly fitted pose without changing its fixed elevation baseline.
         this._captureMotionAnchor();
     }
 
@@ -597,8 +600,18 @@ export class VoxelRenderer {
             if (this._cameraResumeIn > 0) {
                 this._cameraResumeIn = Math.max(0, this._cameraResumeIn - elapsed);
                 // Let OrbitControls finish damping the user's last gesture,
-                // then use that exact pose as the new origin for automation.
-                if (this._cameraResumeIn === 0) this._captureMotionAnchor();
+                // then use that exact yaw, radius and elevation as the start
+                // of a smooth return to the safe baseline.
+                if (this._cameraResumeIn === 0) this._beginMotionRecenter();
+            } else if (this._motionRecenterRemaining > 0) {
+                const step = Math.min(elapsed, this._motionRecenterRemaining);
+                this._motionRecenterRemaining -= step;
+                const progress = 1 - this._motionRecenterRemaining / CAMERA_MOTION.recenterDuration;
+                const eased = progress * progress * (3 - 2 * progress);
+                const baselinePhi = Math.PI / 2 - CAMERA_MOTION.baselineElevation;
+                const phi = this._motionRecenterFromPhi
+                    + (baselinePhi - this._motionRecenterFromPhi) * eased;
+                this._applyCameraPose(this._motionTheta, phi);
             } else {
                 this._motionTime += elapsed;
                 this._applyCameraMotion(sampleCameraMotion(this._motionTime));
@@ -607,32 +620,38 @@ export class VoxelRenderer {
         return before !== this._cameraKey();
     }
 
-    // Store the current orbit in world-y spherical coordinates. Automatic
-    // motion is applied as an absolute pose, rather than as control deltas, so
-    // damping cannot turn a full revolution into a small rocking movement.
+    // Store the current orbit's world-y radius and azimuth. The elevation is
+    // intentionally not captured: automation always uses the fixed safe
+    // baseline rather than inheriting a near-top-down manual pose.
     private _captureMotionAnchor(): void {
         this._motionPosition.subVectors(this.camera.position, this.controls.target);
         this._motionRadius = this._motionPosition.length();
         if (this._motionRadius === 0) return;
-        this._motionPhi = Math.acos(THREE.MathUtils.clamp(
+        this._motionTheta = Math.atan2(this._motionPosition.x, this._motionPosition.z);
+    }
+
+    private _beginMotionRecenter(): void {
+        this._captureMotionAnchor();
+        if (this._motionRadius === 0) return;
+        this._motionRecenterFromPhi = Math.acos(THREE.MathUtils.clamp(
             this._motionPosition.y / this._motionRadius, -1, 1,
         ));
-        this._motionTheta = Math.atan2(this._motionPosition.x, this._motionPosition.z);
+        this._motionRecenterRemaining = CAMERA_MOTION.recenterDuration;
         this._motionTime = 0;
     }
 
     private _applyCameraMotion(motion: { yaw: number; pitch: number }): void {
         if (this._motionRadius === 0) return;
-        const phi = THREE.MathUtils.clamp(
-            this._motionPhi - motion.pitch,
-            0.001,
-            Math.PI - 0.001,
-        );
-        const theta = this._motionTheta + motion.yaw;
-        const sinPhi = Math.sin(phi);
+        const phi = Math.PI / 2 - cameraElevation(motion.pitch);
+        this._applyCameraPose(this._motionTheta + motion.yaw, phi);
+    }
+
+    private _applyCameraPose(theta: number, phi: number): void {
+        const safePhi = THREE.MathUtils.clamp(phi, 0.001, Math.PI - 0.001);
+        const sinPhi = Math.sin(safePhi);
         this._motionPosition.set(
             this._motionRadius * sinPhi * Math.sin(theta),
-            this._motionRadius * Math.cos(phi),
+            this._motionRadius * Math.cos(safePhi),
             this._motionRadius * sinPhi * Math.cos(theta),
         );
         this.camera.position.copy(this.controls.target).add(this._motionPosition);

@@ -77,10 +77,11 @@ the lattice off-centre with no easy way back.
 
 **Auto camera rotation** is enabled by default and carries the lattice through a
 continuous full orbit every 12 seconds. Its elevation rises and falls along a
-sine wave as it circles, so the camera never snaps at the end of a rotation.
-Dragging or zooming takes control for a moment; the automatic motion then
-resumes from the orientation you left it at. Turn it off in the Automaton
-controls when you want a completely still camera.
+sine wave symmetrically around the default viewing angle, within a safe range
+that prevents a top-down view. Dragging or zooming takes control for a moment;
+the automatic motion preserves yaw and zoom, then smoothly recenters elevation
+before resuming. Turn it off in the Automaton controls when you want a
+completely still camera.
 
 Re-seeding on tap means a drag misread as a tap would throw the board away, so
 the threshold errs the other way: anything past ~12px or ~300ms is a drag.

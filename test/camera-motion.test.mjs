@@ -1,17 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CAMERA_MOTION, sampleCameraMotion } from '../dist/camera-motion.js';
+import { CAMERA_MOTION, cameraElevation, sampleCameraMotion } from '../dist/camera-motion.js';
 
 test('camera motion starts at a neutral offset', () => {
     assert.deepEqual(sampleCameraMotion(0), { yaw: 0, pitch: 0 });
 });
 
-test('camera elevation stays inside its configured amplitude', () => {
+test('camera elevation stays inside its configured symmetric range', () => {
     for (let seconds = 0; seconds < 100; seconds += 0.07) {
         const { yaw, pitch } = sampleCameraMotion(seconds);
         assert.ok(yaw >= 0, 'yaw should keep advancing around the orbit');
-        assert.ok(Math.abs(pitch) <= CAMERA_MOTION.pitchAmplitude);
+        const elevation = cameraElevation(pitch);
+        assert.ok(elevation >= CAMERA_MOTION.minElevation);
+        assert.ok(elevation <= CAMERA_MOTION.maxElevation);
     }
+});
+
+test('camera elevation clamps symmetrically around the safe baseline', () => {
+    assert.ok(Math.abs(
+        CAMERA_MOTION.baselineElevation - CAMERA_MOTION.minElevation
+        - (CAMERA_MOTION.maxElevation - CAMERA_MOTION.baselineElevation),
+    ) < 1e-12);
+    assert.equal(cameraElevation(-10), CAMERA_MOTION.minElevation);
+    assert.equal(cameraElevation(10), CAMERA_MOTION.maxElevation);
+    assert.equal(cameraElevation(0), CAMERA_MOTION.baselineElevation);
 });
 
 test('camera motion is deterministic and changes over time', () => {
