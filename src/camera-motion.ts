@@ -6,13 +6,31 @@ export interface CameraMotionOffset {
     pitch: number;
 }
 
+const DEFAULT_CAMERA_ELEVATION = Math.atan2(0.85, Math.hypot(1.1, 1.35));
+const PITCH_AMPLITUDE = 0.24;
+
 export const CAMERA_MOTION = {
-    pitchAmplitude: 0.24, // about 14° above and below the anchor angle
+    // Derived from the camera's initial position, not from the user's current
+    // pose, so automation never adopts a near-top-down manual angle.
+    baselineElevation: DEFAULT_CAMERA_ELEVATION,
+    pitchAmplitude: PITCH_AMPLITUDE, // about 14° above and below the baseline
+    minElevation: DEFAULT_CAMERA_ELEVATION - PITCH_AMPLITUDE,
+    maxElevation: DEFAULT_CAMERA_ELEVATION + PITCH_AMPLITUDE,
     rotationPeriod: 12,
     pitchCyclesPerRotation: 1,
+    recenterDuration: 0.75,
 };
 
 const TWO_PI = Math.PI * 2;
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+export function cameraElevation(pitch: number): number {
+    return clamp(
+        CAMERA_MOTION.baselineElevation + pitch,
+        CAMERA_MOTION.minElevation,
+        CAMERA_MOTION.maxElevation,
+    );
+}
 
 export function sampleCameraMotion(seconds: number): CameraMotionOffset {
     const elapsed = Math.max(0, seconds);
