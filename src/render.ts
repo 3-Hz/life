@@ -205,7 +205,10 @@ export class VoxelRenderer {
     private _cameraInteraction: boolean;
     private _cameraResumeIn: number;
     private _motionTime: number;
-    private _motionOffset: { yaw: number; pitch: number };
+    private _motionRadius: number;
+    private _motionPhi: number;
+    private _motionTheta: number;
+    private _motionPosition: any;
 
     constructor(canvas: HTMLCanvasElement, n: number, { mobile = false }: { mobile?: boolean } = {}) {
         this.canvas = canvas;
@@ -240,7 +243,10 @@ export class VoxelRenderer {
         this._cameraInteraction = false;
         this._cameraResumeIn = 0;
         this._motionTime = 0;
-        this._motionOffset = sampleCameraMotion(0);
+        this._motionRadius = 0;
+        this._motionPhi = 0;
+        this._motionTheta = 0;
+        this._motionPosition = new THREE.Vector3();
         this.controls.addEventListener('start', () => {
             this._cameraInteraction = true;
             this._cameraResumeIn = 0;
@@ -437,11 +443,8 @@ export class VoxelRenderer {
 
     setAutoRotation(enabled: boolean): void {
         if (this.autoRotation === enabled) return;
+        if (enabled) this._captureMotionAnchor();
         this.autoRotation = enabled;
-        // Start a new waveform from the user's current orientation. Applying
-        // only future deltas avoids snapping back to an old automatic pose.
-        this._motionTime = 0;
-        this._motionOffset = sampleCameraMotion(0);
         this._cameraResumeIn = 0;
     }
 
@@ -579,25 +582,61 @@ export class VoxelRenderer {
         const free = this.freeRect(width, height);
         this.applyViewOffset(free); // also updates the projection matrix
         this.frameLattice(free);
+        // Framing changes the camera radius; keep automatic motion anchored to
+        // the newly fitted pose so a panel or resize cannot cause a snap.
+        this._captureMotionAnchor();
     }
 
     // Reports whether the camera is still settling, so the loop can skip draws
     // once everything has come to rest.
     updateControls(dt: number): boolean {
         const before = this._cameraKey();
+        const elapsed = Math.max(0, dt);
+        this.controls.update(dt);
         if (this.autoRotation && !this._cameraInteraction) {
             if (this._cameraResumeIn > 0) {
-                this._cameraResumeIn = Math.max(0, this._cameraResumeIn - Math.max(0, dt));
+                this._cameraResumeIn = Math.max(0, this._cameraResumeIn - elapsed);
+                // Let OrbitControls finish damping the user's last gesture,
+                // then use that exact pose as the new origin for automation.
+                if (this._cameraResumeIn === 0) this._captureMotionAnchor();
             } else {
-                this._motionTime += Math.max(0, dt);
-                const next = sampleCameraMotion(this._motionTime);
-                this.controls.rotateLeft(next.yaw - this._motionOffset.yaw);
-                this.controls.rotateUp(next.pitch - this._motionOffset.pitch);
-                this._motionOffset = next;
+                this._motionTime += elapsed;
+                this._applyCameraMotion(sampleCameraMotion(this._motionTime));
             }
         }
-        this.controls.update(dt);
         return before !== this._cameraKey();
+    }
+
+    // Store the current orbit in world-y spherical coordinates. Automatic
+    // motion is applied as an absolute pose, rather than as control deltas, so
+    // damping cannot turn a full revolution into a small rocking movement.
+    private _captureMotionAnchor(): void {
+        this._motionPosition.subVectors(this.camera.position, this.controls.target);
+        this._motionRadius = this._motionPosition.length();
+        if (this._motionRadius === 0) return;
+        this._motionPhi = Math.acos(THREE.MathUtils.clamp(
+            this._motionPosition.y / this._motionRadius, -1, 1,
+        ));
+        this._motionTheta = Math.atan2(this._motionPosition.x, this._motionPosition.z);
+        this._motionTime = 0;
+    }
+
+    private _applyCameraMotion(motion: { yaw: number; pitch: number }): void {
+        if (this._motionRadius === 0) return;
+        const phi = THREE.MathUtils.clamp(
+            this._motionPhi - motion.pitch,
+            0.001,
+            Math.PI - 0.001,
+        );
+        const theta = this._motionTheta + motion.yaw;
+        const sinPhi = Math.sin(phi);
+        this._motionPosition.set(
+            this._motionRadius * sinPhi * Math.sin(theta),
+            this._motionRadius * Math.cos(phi),
+            this._motionRadius * sinPhi * Math.cos(theta),
+        );
+        this.camera.position.copy(this.controls.target).add(this._motionPosition);
+        this.camera.lookAt(this.controls.target);
     }
 
     private _cameraKey(): string {
