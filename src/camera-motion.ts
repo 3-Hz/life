@@ -7,7 +7,7 @@ export interface CameraMotionOffset {
 }
 
 export const CAMERA_MOTION = {
-    pitchAmplitude: 0.07,
+    pitchAmplitude: 0.24, // about 14° above and below the anchor angle
     rotationPeriod: 12,
     pitchCyclesPerRotation: 1,
 };
