@@ -9,11 +9,15 @@ import { RULE_PRESETS } from './automata.js';
 
 interface UiApp {
     autoQuality: boolean;
+    autoRotate: boolean;
     autoRevive: boolean;
     breathe: boolean;
     sensitivity: number;
     paused: boolean;
-    renderer: { setChromeInsets(insets: { top?: number; right?: number; bottom?: number; left?: number }): void };
+    renderer: {
+        setChromeInsets(insets: { top?: number; right?: number; bottom?: number; left?: number }): void;
+        setAutoRotation(enabled: boolean): void;
+    };
     audius: { search(query: string): Promise<AudiusTrack[]> };
     // The element itself, because owning it is the whole point: transport
     // controls are a property set away, where a widget needed a message.
@@ -38,6 +42,7 @@ interface UiElements {
     revive: HTMLInputElement;
     breathe: HTMLInputElement;
     autoQuality: HTMLInputElement;
+    autoRotate: HTMLInputElement;
     sensitivity: HTMLInputElement;
     sensitivityLabel: HTMLElement;
     seed: HTMLButtonElement;
@@ -144,6 +149,7 @@ export function bindUI(app: UiApp): UiBinding {
         revive: $<HTMLInputElement>('revive'),
         breathe: $<HTMLInputElement>('breathe'),
         autoQuality: $<HTMLInputElement>('autoQuality'),
+        autoRotate: $<HTMLInputElement>('autoRotate'),
         sensitivity: $<HTMLInputElement>('sensitivity'),
         sensitivityLabel: $<HTMLElement>('sensitivityLabel'),
         seed: $<HTMLButtonElement>('seed'),
@@ -225,6 +231,11 @@ export function bindUI(app: UiApp): UiBinding {
         // Someone who switches this off wants the quality they picked, so go
         // back to full rather than leaving them wherever the controller landed.
         if (!els.autoQuality.checked) app.setQualityLevel(0);
+    });
+
+    els.autoRotate.addEventListener('change', () => {
+        app.autoRotate = els.autoRotate.checked;
+        app.renderer.setAutoRotation(app.autoRotate);
     });
 
     els.revive.addEventListener('change', () => {

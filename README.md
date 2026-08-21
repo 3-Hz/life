@@ -75,6 +75,11 @@ On the lattice itself: **tap or click to re-seed**, **drag to rotate**, **pinch
 or scroll to zoom**. Camera panning is deliberately absent — it only ever slid
 the lattice off-centre with no easy way back.
 
+**Auto camera rotation** is enabled by default and gives the lattice a slow,
+sinusoidal breathing orbit on two axes. Dragging or zooming takes control for a
+moment; the automatic motion then resumes from the orientation you left it at.
+Turn it off in the Automaton controls when you want a completely still camera.
+
 Re-seeding on tap means a drag misread as a tap would throw the board away, so
 the threshold errs the other way: anything past ~12px or ~300ms is a drag.
 
@@ -255,6 +260,7 @@ src/automata.ts   lattice, rules, step() — pure, no DOM (the tested module)
 src/audio.ts      capture chain, analyser, feature extraction
 src/audius.ts     Audius search and stream URLs
 src/mapping.ts    audio features -> simulation and visual parameters
+src/camera-motion.ts pure sinusoidal camera offsets
 src/render.ts     three.js scene, instanced voxels
 src/main.ts       wiring and the frame loop
 dist/             generated browser modules (do not edit)

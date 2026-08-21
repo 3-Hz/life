@@ -74,6 +74,7 @@ class App {
     tickRate: number;
     beats: number;
     autoQuality: boolean;
+    autoRotate: boolean;
     qualityLevel: number;
     private _levelChangedAt: number;
     chosenSize: number;
@@ -109,6 +110,7 @@ class App {
         this.beats = 0;
 
         this.autoQuality = true;
+        this.autoRotate = true;
         this.qualityLevel = 0;
         this._levelChangedAt = 0;
         // What the user asked for. The controller may cap below it, never above.
@@ -369,7 +371,7 @@ class App {
         this.renderer.applyVisual(visual);
         this.renderer.updateShocks(dt);
         this.renderer.setPhase(this._phase);
-        const cameraMoved = this.renderer.updateControls();
+        const cameraMoved = this.renderer.updateControls(dt);
         const audioLive = this.audio.active;
         if (!this.paused || ticks > 0 || syncMs > 0 || cameraMoved || audioLive) {
             this.renderer.render();
